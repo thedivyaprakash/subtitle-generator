@@ -1,0 +1,179 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+
+function TimelineEditor({
+  cues = [],
+  currentTime = 0,
+  duration = 0,
+  selectedIndex = -1,
+  onSeek,
+  onSelectCue,
+  onTogglePlay,
+}) {
+  const safeDuration = Number(duration) || 0;
+  const trackScrollRef = useRef(null);
+  const playheadRef = useRef(null);
+  const [zoom, setZoom] = useState(100);
+
+  const rulerMarks = useMemo(() => {
+    if (!safeDuration) return [0];
+    const marks = [];
+    for (let time = 0; time <= safeDuration; time += 5) {
+      marks.push(time);
+    }
+    if (marks[marks.length - 1] !== safeDuration) {
+      marks.push(safeDuration);
+    }
+    return marks;
+  }, [safeDuration]);
+
+  const formatTime = (seconds) => {
+    const totalSeconds = Math.max(0, Math.floor(seconds));
+    const minutes = Math.floor(totalSeconds / 60);
+    const remainingSeconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+  };
+
+  const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+  const pixelsPerSecond = zoom / 10;
+
+  const activeIndex =
+    selectedIndex >= 0
+      ? selectedIndex
+      : cues.findIndex((cue) => currentTime >= cue.start && currentTime <= cue.end);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      const targetTag = event.target?.tagName?.toLowerCase();
+      if (["input", "textarea", "select"].includes(targetTag)) return;
+
+      if (event.key === " ") {
+        event.preventDefault();
+        onTogglePlay?.();
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        const nextIndex = Math.max(0, selectedIndex > 0 ? selectedIndex - 1 : activeIndex - 1);
+        const cue = cues[nextIndex];
+        if (cue) {
+          onSelectCue?.(nextIndex);
+          onSeek?.(cue.start, nextIndex);
+        }
+        return;
+      }
+
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        const nextIndex = Math.min(cues.length - 1, selectedIndex >= 0 ? selectedIndex + 1 : activeIndex + 1);
+        const cue = cues[nextIndex];
+        if (cue) {
+          onSelectCue?.(nextIndex);
+          onSeek?.(cue.start, nextIndex);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeIndex, cues, onSeek, onSelectCue, onTogglePlay, selectedIndex]);
+
+  useEffect(() => {
+    const track = trackScrollRef.current;
+    const playhead = playheadRef.current;
+    if (!track || !playhead) return;
+
+    const visibleLeft = track.scrollLeft;
+    const visibleRight = visibleLeft + track.clientWidth;
+    const playheadLeft = playhead.offsetLeft;
+    const playheadRight = playheadLeft + playhead.offsetWidth;
+
+    if (playheadRight > visibleRight - 32) {
+      track.scrollLeft = playheadRight - track.clientWidth + 32;
+    } else if (playheadLeft < visibleLeft + 32) {
+      track.scrollLeft = Math.max(0, playheadLeft - 32);
+    }
+  }, [currentTime, zoom, safeDuration]);
+
+  return (
+    <div className="timeline-editor">
+      <div className="timeline-editor__controls">
+        {[25, 50, 100, 200, 400].map((value) => (
+          <button
+            key={value}
+            type="button"
+            className={`tab-button ${zoom === value ? "tab-button--active" : ""}`}
+            onClick={() => setZoom(value)}
+          >
+            {value}%
+          </button>
+        ))}
+      </div>
+
+      <div className="timeline-editor__ruler">
+        {rulerMarks.map((time) => (
+          <span
+            key={time}
+            className="timeline-editor__tick"
+            style={{ left: `${time * pixelsPerSecond}px` }}
+          >
+            {formatTime(time)}
+          </span>
+        ))}
+      </div>
+
+      <div className="timeline-editor__track-wrap" ref={trackScrollRef}>
+        <div
+          className="timeline-editor__track"
+          style={{ width: `${Math.max(safeDuration * pixelsPerSecond, 100)}px` }}
+        >
+          <div
+            ref={playheadRef}
+            className="timeline-editor__playhead"
+            style={{ left: `${safeDuration ? clamp(currentTime * pixelsPerSecond, 0, safeDuration * pixelsPerSecond) : 0}px` }}
+          />
+          {cues.map((cue, index) => {
+            const cueStart = Number(cue.start) || 0;
+            const cueEnd = Number(cue.end) || 0;
+            const left = cueStart * pixelsPerSecond;
+            const width = Math.max((cueEnd - cueStart) * pixelsPerSecond, 48);
+            const label = (cue.text || "")
+              .split(/\s+/)
+              .filter(Boolean)
+              .slice(0, 4)
+              .join(" ");
+            const isActive = index === activeIndex;
+            const isSelected = index === selectedIndex;
+            const cueDuration = Math.max(cueEnd - cueStart, 0);
+
+            return (
+              <button
+                key={`${cue.start}-${cue.end}-${index}`}
+                type="button"
+                className={[
+                  "timeline-editor__block",
+                  isActive ? "timeline-editor__block--active" : "",
+                  isSelected ? "timeline-editor__block--selected" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                style={{ left: `${left}px`, width: `${width}px` }}
+                onClick={() => {
+                  onSelectCue?.(index);
+                  onSeek?.(cueStart, index);
+                }}
+                title={`Start Time: ${formatTime(cueStart)}\nEnd Time: ${formatTime(cueEnd)}\nDuration: ${formatTime(cueDuration)}\nSubtitle Text: ${cue.text || ""}`}
+              >
+                <span className="timeline-editor__block-label">
+                  {label || "Subtitle"}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default TimelineEditor;
