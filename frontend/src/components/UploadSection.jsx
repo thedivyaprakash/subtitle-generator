@@ -1,10 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import api from "../services/api";
 import { Form, Button } from "react-bootstrap";
 import "../App.css";
 import Loader from "./Loader";
 import SubtitleOverlay from "./SubtitleOverlay";
 import TimelineEditor from "./TimelineEditor";
+import useTimeline from "../hooks/useTimeline";
+import useUndoRedo from "../hooks/useUndoRedo";
+import useWaveform from "../hooks/useWaveform";
+import useProject from "../hooks/useProject";
+import {
+  buildSubtitleCueList,
+} from "../utils/subtitleUtils";
 
 function UploadSection() {
   const [file, setFile] = useState(null);
@@ -43,12 +50,15 @@ function UploadSection() {
   const [videoSeek, setVideoSeek] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
   const [timelineZoom, setTimelineZoom] = useState(100);
-  const [waveformPeaks, setWaveformPeaks] = useState([]);
-  const [history, setHistory] = useState({ past: [], future: [] });
   const videoRef = useRef(null);
-  const projectFileInputRef = useRef(null);
-  const historySkipRef = useRef(false);
-  const lastHistorySnapshotRef = useRef(null);
+
+  const previewVideoSrc = videoPath
+    ? videoPath.startsWith("http")
+      ? videoPath
+      : videoPath.includes("/uploads/")
+        ? `http://localhost:5000${videoPath.slice(videoPath.indexOf("/uploads/"))}`
+        : `http://localhost:5000/uploads/${videoPath.split(/[\\/]/).pop()}`
+    : "";
 
   useEffect(() => {
     const loadFonts = async () => {
@@ -78,28 +88,167 @@ function UploadSection() {
     return () => style.remove();
   }, [fontName]);
 
-  const parseSrtTimeToSeconds = (srtTime) => {
-    if (!srtTime) return 0;
-    const normalized = String(srtTime).trim().replace(",", ".");
-    const [hours = "0", minutes = "0", secondsWithFraction = "0"] = normalized.split(":");
-    const [seconds = "0", fraction = "0"] = secondsWithFraction.split(".");
+  const subtitleLines = useMemo(
+    () =>
+      subtitleContent
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line && !line.includes("-->") && !/^\d+$/.test(line)),
+    [subtitleContent]
+  );
 
-    return (
-      Number(hours || 0) * 3600 +
-      Number(minutes || 0) * 60 +
-      Number(seconds || 0) +
-      Number(`0.${fraction}`)
+  const {
+    subtitleCues,
+    activeCue,
+    activeCueWords,
+    updateSubtitleCues,
+  } = useTimeline({
+    subtitleContent,
+    subtitleWords,
+    subtitleMode,
+    videoSeek,
+    selectedSubtitleIndex,
+    setSubtitleContent,
+    setSelectedSubtitleIndex,
+  });
+
+  const filteredSubtitleLines = useMemo(
+    () =>
+      subtitleLines.filter((line) =>
+        line.toLowerCase().includes(searchTerm.toLowerCase())
+      ),
+    [searchTerm, subtitleLines]
+  );
+
+  const activeCueText = activeCue?.text || subtitleLines[0] || "";
+
+  const splitSelectedCue = useCallback(() => {
+    const cues = buildSubtitleCueList(subtitleContent);
+    const cue = cues[selectedSubtitleIndex];
+    if (!cue) return;
+    const cueStart = Number(cue.start) || 0;
+    const cueEnd = Number(cue.end) || 0;
+    const splitTime = Math.min(Math.max(videoSeek, cueStart + 0.01), cueEnd - 0.01);
+    if (!(splitTime > cueStart && splitTime < cueEnd)) return;
+
+    const words = cue.text.split(/\s+/).filter(Boolean);
+    const elapsedRatio = (splitTime - cueStart) / Math.max(cueEnd - cueStart, 0.0001);
+    const splitIndex = Math.min(
+      Math.max(1, Math.round(words.length * elapsedRatio)),
+      Math.max(1, words.length - 1)
     );
+    if (words.length < 2) return;
+
+    const nextCues = [
+      ...cues.slice(0, selectedSubtitleIndex),
+      { start: cueStart, end: splitTime, text: words.slice(0, splitIndex).join(" ") },
+      { start: splitTime, end: cueEnd, text: words.slice(splitIndex).join(" ") },
+      ...cues.slice(selectedSubtitleIndex + 1),
+    ];
+
+    updateSubtitleCues(nextCues, selectedSubtitleIndex);
+  }, [selectedSubtitleIndex, subtitleContent, updateSubtitleCues, videoSeek]);
+
+  const mergeSelectedCue = useCallback(() => {
+    const cues = buildSubtitleCueList(subtitleContent);
+    const cue = cues[selectedSubtitleIndex];
+    const nextCue = cues[selectedSubtitleIndex + 1];
+    if (!cue || !nextCue) return;
+
+    updateSubtitleCues(
+      [
+        ...cues.slice(0, selectedSubtitleIndex),
+        { start: cue.start, end: nextCue.end, text: `${cue.text} ${nextCue.text}`.trim() },
+        ...cues.slice(selectedSubtitleIndex + 2),
+      ],
+      selectedSubtitleIndex
+    );
+  }, [selectedSubtitleIndex, subtitleContent, updateSubtitleCues]);
+
+  const deleteSelectedCue = useCallback(() => {
+    const cues = buildSubtitleCueList(subtitleContent);
+    if (!cues[selectedSubtitleIndex]) return;
+    const nextCues = cues.filter((_, index) => index !== selectedSubtitleIndex);
+    updateSubtitleCues(nextCues, Math.min(selectedSubtitleIndex, Math.max(0, nextCues.length - 1)));
+  }, [selectedSubtitleIndex, subtitleContent, updateSubtitleCues]);
+
+  const duplicateSelectedCue = useCallback(() => {
+    const cues = buildSubtitleCueList(subtitleContent);
+    const cue = cues[selectedSubtitleIndex];
+    if (!cue) return;
+
+    const nextCues = [
+      ...cues.slice(0, selectedSubtitleIndex + 1),
+      { start: cue.start, end: cue.end, text: cue.text },
+      ...cues.slice(selectedSubtitleIndex + 1),
+    ];
+
+    updateSubtitleCues(nextCues, selectedSubtitleIndex + 1);
+  }, [selectedSubtitleIndex, subtitleContent, updateSubtitleCues]);
+
+  const [waveformPeaks, setWaveformPeaks] = useWaveform(previewVideoSrc);
+
+  const projectState = {
+    subtitleContent,
+    subtitleWords,
+    waveformPeaks,
+    subtitleMode,
+    timelineZoom,
+    selectedSubtitleIndex,
+    subtitlePreset,
+    videoPath,
+    subtitlePath,
+    editorStyles: {
+      fontName,
+      fontWeight,
+      fontColor,
+      fontSize,
+      outline,
+      outlineEnabled,
+      outlineColor,
+      shadow,
+      shadowEnabled,
+      backColor,
+      backgroundEnabled,
+      position,
+      highlightColor,
+      highlightMode,
+      animation,
+    },
   };
 
-  const formatSecondsToSrtTime = (seconds) => {
-    const totalMilliseconds = Math.max(0, Math.round(Number(seconds || 0) * 1000));
-    const hours = Math.floor(totalMilliseconds / 3600000);
-    const minutes = Math.floor((totalMilliseconds % 3600000) / 60000);
-    const secs = Math.floor((totalMilliseconds % 60000) / 1000);
-    const milliseconds = totalMilliseconds % 1000;
-    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")},${String(milliseconds).padStart(3, "0")}`;
-  };
+  const { fileInputRef, saveProject, openProject, handleProjectFileChange } = useProject(projectState, {
+    setSubtitleContent,
+    setSubtitleWords,
+    setWaveformPeaks,
+    setSubtitleMode,
+    setTimelineZoom,
+    setSelectedSubtitleIndex,
+    setSubtitlePreset,
+    setVideoPath,
+    setSubtitlePath,
+    setFontName,
+    setFontWeight,
+    setFontColor,
+    setFontSize,
+    setOutline,
+    setOutlineEnabled,
+    setOutlineColor,
+    setShadow,
+    setShadowEnabled,
+    setBackColor,
+    setBackgroundEnabled,
+    setPosition,
+    setHighlightColor,
+    setHighlightMode,
+    setAnimation,
+    setVideoSeek,
+    setIsVideoPlaying,
+    setShowDownload,
+    setSuccessMessage,
+    setFinalVideoPath,
+    setGeneratedSrtPath,
+  });
 
   const buildEditorSnapshot = () => ({
     subtitleContent,
@@ -123,402 +272,31 @@ function UploadSection() {
     position,
   });
 
-  const areSnapshotsEqual = (left, right) =>
-    JSON.stringify(left) === JSON.stringify(right);
-
   const applyEditorSnapshot = (snapshot) => {
     if (!snapshot) return;
-    historySkipRef.current = true;
-    setSubtitleContent(snapshot.subtitleContent ?? "");
+    setSubtitleContent(snapshot.subtitleContent ?? '');
     setSelectedSubtitleIndex(snapshot.selectedSubtitleIndex ?? 0);
-    setSubtitleMode(snapshot.subtitleMode ?? "original");
-    setSubtitlePreset(snapshot.subtitlePreset ?? "");
-    setHighlightMode(snapshot.highlightMode ?? "current");
-    setHighlightColor(snapshot.highlightColor ?? "#ffff00");
-    setAnimation(snapshot.animation ?? "none");
-    setFontName(snapshot.fontName ?? "Poppins");
-    setFontWeight(snapshot.fontWeight ?? "Regular");
-    setFontColor(snapshot.fontColor ?? "#ffffff");
+    setSubtitleMode(snapshot.subtitleMode ?? 'original');
+    setSubtitlePreset(snapshot.subtitlePreset ?? '');
+    setHighlightMode(snapshot.highlightMode ?? 'current');
+    setHighlightColor(snapshot.highlightColor ?? '#ffff00');
+    setAnimation(snapshot.animation ?? 'none');
+    setFontName(snapshot.fontName ?? 'Poppins');
+    setFontWeight(snapshot.fontWeight ?? 'Regular');
+    setFontColor(snapshot.fontColor ?? '#ffffff');
     setFontSize(snapshot.fontSize ?? 48);
     setOutline(snapshot.outline ?? 2);
     setOutlineEnabled(Boolean(snapshot.outlineEnabled));
     setShadow(snapshot.shadow ?? 1);
     setShadowEnabled(Boolean(snapshot.shadowEnabled));
-    setBackColor(snapshot.backColor ?? "#000000");
+    setBackColor(snapshot.backColor ?? '#000000');
     setBackgroundEnabled(Boolean(snapshot.backgroundEnabled));
-    setOutlineColor(snapshot.outlineColor ?? "#000000");
-    setPosition(snapshot.position ?? "bottom");
+    setOutlineColor(snapshot.outlineColor ?? '#000000');
+    setPosition(snapshot.position ?? 'bottom');
   };
 
-  const undoEditorChange = () => {
-    let previousSnapshot = null;
-    let currentSnapshot = null;
-    setHistory((currentHistory) => {
-      if (!currentHistory.past.length) return currentHistory;
-      previousSnapshot = currentHistory.past[currentHistory.past.length - 1];
-      currentSnapshot = buildEditorSnapshot();
-      return {
-        past: currentHistory.past.slice(0, -1),
-        future: [currentSnapshot, ...currentHistory.future].slice(0, 100),
-      };
-    });
-    if (!previousSnapshot) return;
-    historySkipRef.current = true;
-    lastHistorySnapshotRef.current = previousSnapshot;
-    applyEditorSnapshot(previousSnapshot);
-  };
+  const { undo, redo, sync } = useUndoRedo(buildEditorSnapshot, applyEditorSnapshot);
 
-  const redoEditorChange = () => {
-    let nextSnapshot = null;
-    let currentSnapshot = null;
-    setHistory((currentHistory) => {
-      if (!currentHistory.future.length) return currentHistory;
-      nextSnapshot = currentHistory.future[0];
-      currentSnapshot = buildEditorSnapshot();
-      return {
-        past: [...currentHistory.past.slice(-99), currentSnapshot],
-        future: currentHistory.future.slice(1),
-      };
-    });
-    if (!nextSnapshot) return;
-    historySkipRef.current = true;
-    lastHistorySnapshotRef.current = nextSnapshot;
-    applyEditorSnapshot(nextSnapshot);
-  };
-
-  const buildSubtitleCueList = (content = subtitleContent) => {
-    const lines = String(content).split("\n").map((line) => line.trimEnd());
-    const cues = [];
-
-    for (let index = 0; index < lines.length; index += 1) {
-      const line = lines[index].trim();
-      if (!line || /^\d+$/.test(line) || !line.includes("-->")) continue;
-
-      const [startRaw, endRaw] = line.split("-->").map((part) => part.trim());
-      const textLines = [];
-      let nextIndex = index + 1;
-
-      while (nextIndex < lines.length) {
-        const nextLine = lines[nextIndex].trim();
-        if (!nextLine) break;
-        if (/^\d+$/.test(nextLine) && lines[nextIndex + 1]?.includes("-->")) break;
-        if (nextLine.includes("-->")) break;
-        textLines.push(nextLine);
-        nextIndex += 1;
-      }
-
-      cues.push({
-        start: parseSrtTimeToSeconds(startRaw),
-        end: parseSrtTimeToSeconds(endRaw),
-        text: textLines.join(" ").trim(),
-      });
-    }
-
-    return cues;
-  };
-
-  const updateSubtitleCues = (nextCues, nextSelectedIndex = selectedSubtitleIndex) => {
-    const normalizedCues = normalizeCues(nextCues);
-    writeCuesToSubtitleContent(normalizedCues);
-    setSelectedSubtitleIndex(
-      Math.max(0, Math.min(nextSelectedIndex, Math.max(0, normalizedCues.length - 1)))
-    );
-  };
-
-  const splitSelectedCue = () => {
-    const cues = buildSubtitleCueList();
-    const cue = cues[selectedSubtitleIndex];
-    if (!cue) return;
-    const cueStart = Number(cue.start) || 0;
-    const cueEnd = Number(cue.end) || 0;
-    const splitTime = Math.min(Math.max(videoSeek, cueStart + 0.01), cueEnd - 0.01);
-    if (!(splitTime > cueStart && splitTime < cueEnd)) return;
-
-    const words = cue.text.split(/\s+/).filter(Boolean);
-    const elapsedRatio = (splitTime - cueStart) / Math.max(cueEnd - cueStart, 0.0001);
-    const splitIndex = Math.min(
-      Math.max(1, Math.round(words.length * elapsedRatio)),
-      Math.max(1, words.length - 1)
-    );
-    if (words.length < 2) return;
-
-    const leftWords = words.slice(0, splitIndex);
-    const rightWords = words.slice(splitIndex);
-    const nextCues = [
-      ...cues.slice(0, selectedSubtitleIndex),
-      {
-        start: cueStart,
-        end: splitTime,
-        text: leftWords.join(" "),
-      },
-      {
-        start: splitTime,
-        end: cueEnd,
-        text: rightWords.join(" "),
-      },
-      ...cues.slice(selectedSubtitleIndex + 1),
-    ];
-
-    updateSubtitleCues(nextCues, selectedSubtitleIndex);
-  };
-
-  const mergeSelectedCue = () => {
-    const cues = buildSubtitleCueList();
-    const cue = cues[selectedSubtitleIndex];
-    const nextCue = cues[selectedSubtitleIndex + 1];
-    if (!cue || !nextCue) return;
-
-    const mergedCue = {
-      start: cue.start,
-      end: nextCue.end,
-      text: `${cue.text} ${nextCue.text}`.trim(),
-    };
-
-    const nextCues = [
-      ...cues.slice(0, selectedSubtitleIndex),
-      mergedCue,
-      ...cues.slice(selectedSubtitleIndex + 2),
-    ];
-
-    updateSubtitleCues(nextCues, selectedSubtitleIndex);
-  };
-
-  const deleteSelectedCue = () => {
-    const cues = buildSubtitleCueList();
-    if (!cues[selectedSubtitleIndex]) return;
-
-    const nextCues = cues.filter((_, index) => index !== selectedSubtitleIndex);
-    const nextSelectedIndex = Math.min(selectedSubtitleIndex, Math.max(0, nextCues.length - 1));
-    updateSubtitleCues(nextCues, nextSelectedIndex);
-  };
-
-  const duplicateSelectedCue = () => {
-    const cues = buildSubtitleCueList();
-    const cue = cues[selectedSubtitleIndex];
-    if (!cue) return;
-
-    const copyCue = {
-      start: cue.start,
-      end: cue.end,
-      text: cue.text,
-    };
-
-    const nextCues = [
-      ...cues.slice(0, selectedSubtitleIndex + 1),
-      copyCue,
-      ...cues.slice(selectedSubtitleIndex + 1),
-    ];
-
-    updateSubtitleCues(nextCues, selectedSubtitleIndex + 1);
-  };
-
-  const subtitleLines = useMemo(
-    () =>
-      subtitleContent
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line && !line.includes("-->") && !/^\d+$/.test(line)),
-    [subtitleContent]
-  );
-
-  const subtitleCues = useMemo(() => {
-    const lines = subtitleContent.split("\n").map((line) => line.trimEnd());
-    const cues = [];
-
-    for (let index = 0; index < lines.length; index += 1) {
-      const line = lines[index].trim();
-      if (!line || /^\d+$/.test(line) || !line.includes("-->")) continue;
-
-      const [startRaw, endRaw] = line.split("-->").map((part) => part.trim());
-      const textLines = [];
-      let nextIndex = index + 1;
-
-      while (nextIndex < lines.length) {
-        const nextLine = lines[nextIndex].trim();
-        if (!nextLine) break;
-        if (/^\d+$/.test(nextLine) && lines[nextIndex + 1]?.includes("-->")) break;
-        if (nextLine.includes("-->")) break;
-        textLines.push(nextLine);
-        nextIndex += 1;
-      }
-
-      cues.push({
-        start: parseSrtTimeToSeconds(startRaw),
-        end: parseSrtTimeToSeconds(endRaw),
-        text: textLines.join(" ").trim(),
-      });
-    }
-
-    return cues;
-  }, [subtitleContent]);
-
-  const writeCuesToSubtitleContent = (nextCues) => {
-    const nextSubtitleContent = nextCues
-      .map((cue, index) => `${index + 1}\n${formatSecondsToSrtTime(cue.start)} --> ${formatSecondsToSrtTime(cue.end)}\n${cue.text}\n`)
-      .join("\n")
-      .trim();
-    setSubtitleContent(nextSubtitleContent);
-  };
-
-  const normalizeCues = (nextCues = []) => {
-    let previousEnd = 0;
-    return nextCues.map((cue) => {
-      const start = Math.max(previousEnd, Number(cue.start) || 0);
-      const end = Math.max(start + 0.01, Number(cue.end) || start + 0.01);
-      previousEnd = end;
-      return {
-        start,
-        end,
-        text: String(cue.text || "").trim(),
-      };
-    });
-  };
-
-  const buildProjectPayload = () => ({
-    version: 1,
-    savedAt: new Date().toISOString(),
-    subtitles: subtitleContent,
-    subtitleWords,
-    waveformPeaks,
-    editorStyles: {
-      fontName,
-      fontWeight,
-      fontColor,
-      fontSize,
-      outline,
-      outlineEnabled,
-      outlineColor,
-      shadow,
-      shadowEnabled,
-      backColor,
-      backgroundEnabled,
-      position,
-      highlightColor,
-      highlightMode,
-      animation,
-    },
-    subtitleMode,
-    timelineZoom,
-    selectedCue: selectedSubtitleIndex,
-    template: subtitlePreset,
-    videoPath,
-    subtitlePath,
-  });
-
-  const applyProjectPayload = (payload = {}) => {
-    if (!payload || typeof payload !== "object") {
-      throw new Error("Invalid project format.");
-    }
-    if (payload.version !== 1) {
-      throw new Error("Unsupported project version.");
-    }
-    const editorStyles = payload.editorStyles || {};
-    setSubtitleContent(String(payload.subtitles || ""));
-    setSubtitleWords(Array.isArray(payload.subtitleWords) ? payload.subtitleWords : []);
-    setWaveformPeaks(Array.isArray(payload.waveformPeaks) ? payload.waveformPeaks : []);
-    setSubtitleMode(payload.subtitleMode || "original");
-    setTimelineZoom(Number(payload.timelineZoom) || 100);
-    setSelectedSubtitleIndex(Number(payload.selectedCue) || 0);
-    setSubtitlePreset(payload.template || "");
-    setVideoPath(payload.videoPath || "");
-    setSubtitlePath(payload.subtitlePath || "");
-    setFontName(editorStyles.fontName || "Poppins");
-    setFontWeight(editorStyles.fontWeight || "Regular");
-    setFontColor(editorStyles.fontColor || "#ffffff");
-    setFontSize(Number(editorStyles.fontSize) || 48);
-    setOutline(Number(editorStyles.outline) || 2);
-    setOutlineEnabled(Boolean(editorStyles.outlineEnabled));
-    setOutlineColor(editorStyles.outlineColor || "#000000");
-    setShadow(Number(editorStyles.shadow) || 1);
-    setShadowEnabled(Boolean(editorStyles.shadowEnabled));
-    setBackColor(editorStyles.backColor || "#000000");
-    setBackgroundEnabled(Boolean(editorStyles.backgroundEnabled));
-    setPosition(editorStyles.position || "bottom");
-    setHighlightColor(editorStyles.highlightColor || "#ffff00");
-    setHighlightMode(editorStyles.highlightMode || "current");
-    setAnimation(editorStyles.animation || "none");
-    setVideoSeek(0);
-    setIsVideoPlaying(false);
-    setShowDownload(false);
-    setSuccessMessage("");
-    setFinalVideoPath("");
-    setGeneratedSrtPath("");
-    historySkipRef.current = true;
-  };
-
-  const saveProject = () => {
-    const projectJson = JSON.stringify(buildProjectPayload(), null, 2);
-    const blob = new Blob([projectJson], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `subtitle-project-${Date.now()}.subtitle`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const openProject = () => {
-    projectFileInputRef.current?.click();
-  };
-
-  const handleProjectFileChange = async (event) => {
-    const projectFile = event.target.files?.[0];
-    if (!projectFile) return;
-    try {
-      const text = await projectFile.text();
-      const payload = JSON.parse(text);
-      applyProjectPayload(payload);
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Unable to open project file.");
-    } finally {
-      event.target.value = "";
-    }
-  };
-
-  useEffect(() => {
-    if (selectedSubtitleIndex >= subtitleLines.length) {
-      setSelectedSubtitleIndex(Math.max(0, subtitleLines.length - 1));
-    }
-  }, [selectedSubtitleIndex, subtitleLines.length]);
-
-  const filteredSubtitleLines = subtitleLines.filter((line) =>
-    line.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-  const currentSubtitle =
-    filteredSubtitleLines[selectedSubtitleIndex] ||
-    subtitleLines[0] ||
-    "Your subtitle preview will appear here.";
-  const isVideoUploaded = Boolean(videoPath);
-  const previewCue =
-    subtitleContent
-      .split("\n")
-      .map((line) => line.trim())
-      .find((line) => line && !line.includes("-->") && !/^\d+$/.test(line)) ||
-    "Your subtitle preview will appear here.";
-  const activeCue = subtitleCues.find(
-    (cue) => videoSeek >= cue.start && videoSeek <= cue.end
-  );
-  const activeCueText = activeCue?.text || previewCue;
-  const activeCueWords = useMemo(() => {
-    if (subtitleMode !== "karaoke" || !subtitleWords.length) {
-      return [];
-    }
-    const cueStart = activeCue?.start ?? videoSeek;
-    const cueEnd = activeCue?.end ?? videoSeek + 0.8;
-
-    const filteredWords = subtitleWords
-      .filter((word) => {
-        const wordStart = Number(word.start) || 0;
-        const wordEnd = Number(word.end) || 0;
-        return wordStart >= cueStart && wordEnd <= cueEnd;
-      })
-      .map((word) => ({
-        word: word.word,
-        start: Number(word.start) || 0,
-        end: Number(word.end) || 0,
-      }));
-    return filteredWords;
-  }, [activeCue?.start, activeCue?.end, subtitleMode, subtitleWords, videoSeek]);
   const editorSnapshot = useMemo(
     () => ({
       subtitleContent,
@@ -565,33 +343,8 @@ function UploadSection() {
   );
 
   useEffect(() => {
-    if (historySkipRef.current) {
-      historySkipRef.current = false;
-      lastHistorySnapshotRef.current = editorSnapshot;
-      return;
-    }
-
-    if (!lastHistorySnapshotRef.current) {
-      lastHistorySnapshotRef.current = editorSnapshot;
-      return;
-    }
-
-    if (!areSnapshotsEqual(lastHistorySnapshotRef.current, editorSnapshot)) {
-      const previousSnapshot = lastHistorySnapshotRef.current;
-      lastHistorySnapshotRef.current = editorSnapshot;
-      setHistory((currentHistory) => ({
-        past: [...currentHistory.past.slice(-99), previousSnapshot],
-        future: [],
-      }));
-    }
-  }, [editorSnapshot]);
-  const previewVideoSrc = videoPath
-    ? videoPath.startsWith("http")
-      ? videoPath
-      : videoPath.includes("/uploads/")
-        ? `http://localhost:5000${videoPath.slice(videoPath.indexOf("/uploads/"))}`
-        : `http://localhost:5000/uploads/${videoPath.split(/[\\/]/).pop()}`
-    : "";
+    sync(editorSnapshot);
+  }, [editorSnapshot, sync]);
 
   const uploadVideo = async () => {
     if (!file) return;
@@ -611,53 +364,6 @@ function UploadSection() {
       setIsUploading(false);
     }
   };
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const generateWaveform = async () => {
-      if (!previewVideoSrc) {
-        setWaveformPeaks([]);
-        return;
-      }
-
-      try {
-        const response = await fetch(previewVideoSrc);
-        const arrayBuffer = await response.arrayBuffer();
-        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-        if (!AudioContextClass) return;
-        const audioContext = new AudioContextClass();
-        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-        const channelData = audioBuffer.getChannelData(0);
-        const bucketCount = 320;
-        const samplesPerBucket = Math.max(1, Math.floor(channelData.length / bucketCount));
-        const peaks = Array.from({ length: bucketCount }, (_, bucketIndex) => {
-          const start = bucketIndex * samplesPerBucket;
-          const end = Math.min(channelData.length, start + samplesPerBucket);
-          let peak = 0;
-          for (let sampleIndex = start; sampleIndex < end; sampleIndex += 1) {
-            peak = Math.max(peak, Math.abs(channelData[sampleIndex] || 0));
-          }
-          return peak;
-        });
-
-        if (!cancelled) {
-          setWaveformPeaks(peaks);
-        }
-        audioContext.close?.();
-      } catch (error) {
-        if (!cancelled) {
-          setWaveformPeaks([]);
-        }
-      }
-    };
-
-    generateWaveform();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [previewVideoSrc]);
 
   const generateVideo = async () => {
     setIsGenerating(true);
@@ -688,7 +394,7 @@ function UploadSection() {
       setFinalVideoPath(response.data.finalVideoPath);
       setShowDownload(true);
       alert("Video generated successfully.");
-    } catch (error) {
+    } catch {
       alert("Video generation failed");
     } finally {
       setIsGenerating(false);
@@ -715,15 +421,15 @@ function UploadSection() {
 
       event.preventDefault();
       if (isUndo) {
-        undoEditorChange();
+        undo();
       } else {
-        redoEditorChange();
+        redo();
       }
     };
 
     window.addEventListener("keydown", handleUndoRedo);
     return () => window.removeEventListener("keydown", handleUndoRedo);
-  }, []);
+  }, [redo, undo, selectedSubtitleIndex, subtitleContent]);
 
   useEffect(() => {
     const handleEditorActions = (event) => {
@@ -755,7 +461,7 @@ function UploadSection() {
 
     window.addEventListener("keydown", handleEditorActions);
     return () => window.removeEventListener("keydown", handleEditorActions);
-  }, [selectedSubtitleIndex, subtitleContent, videoSeek]);
+  }, [deleteSelectedCue, duplicateSelectedCue]);
 
   const subtitlePreviewStyle = {
     color: fontColor,
@@ -795,7 +501,7 @@ function UploadSection() {
   return (
     <main className="subtitle-page subtitle-page--desktop">
       <input
-        ref={projectFileInputRef}
+        ref={fileInputRef}
         type="file"
         accept=".json,.subtitle,application/json"
         style={{ display: "none" }}

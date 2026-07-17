@@ -18,13 +18,8 @@ function TimelineEditor({
   const trackScrollRef = useRef(null);
   const playheadRef = useRef(null);
   const interactionRef = useRef(null);
-  const [zoom, setZoom] = useState(controlledZoom || 100);
-
-  useEffect(() => {
-    if (typeof controlledZoom === "number") {
-      setZoom(controlledZoom);
-    }
-  }, [controlledZoom]);
+  const [internalZoom, setInternalZoom] = useState(controlledZoom || 100);
+  const zoom = typeof controlledZoom === "number" ? controlledZoom : internalZoom;
 
   const rulerMarks = useMemo(() => {
     if (!safeDuration) return [0];
@@ -163,7 +158,7 @@ function TimelineEditor({
             type="button"
             className={`tab-button ${zoom === value ? "tab-button--active" : ""}`}
             onClick={() => {
-              setZoom(value);
+              setInternalZoom(value);
               onZoomChange?.(value);
             }}
           >
