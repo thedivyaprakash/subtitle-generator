@@ -1,17 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import Waveform from "./Waveform";
 
 function TimelineEditor({
   cues = [],
   currentTime = 0,
   duration = 0,
   selectedIndex = -1,
+  waveformPeaks = [],
   onSeek,
   onSelectCue,
   onTogglePlay,
+  onUpdateCue,
 }) {
   const safeDuration = Number(duration) || 0;
   const trackScrollRef = useRef(null);
   const playheadRef = useRef(null);
+  const interactionRef = useRef(null);
   const [zoom, setZoom] = useState(100);
 
   const rulerMarks = useMemo(() => {
@@ -35,6 +39,7 @@ function TimelineEditor({
 
   const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
   const pixelsPerSecond = zoom / 10;
+  const minCueDuration = 0.08;
 
   const activeIndex =
     selectedIndex >= 0
@@ -94,6 +99,52 @@ function TimelineEditor({
       track.scrollLeft = Math.max(0, playheadLeft - 32);
     }
   }, [currentTime, zoom, safeDuration]);
+
+  useEffect(() => {
+    const handlePointerMove = (event) => {
+      const interaction = interactionRef.current;
+      if (!interaction) return;
+
+      const track = trackScrollRef.current;
+      if (!track) return;
+
+      const rect = track.getBoundingClientRect();
+      const nextTime = clamp((event.clientX - rect.left + track.scrollLeft) / pixelsPerSecond, 0, safeDuration);
+      const cue = cues[interaction.index];
+      if (!cue) return;
+
+      if (interaction.mode === "move") {
+        const durationSeconds = Math.max((cue.end || 0) - (cue.start || 0), minCueDuration);
+        let nextStart = nextTime - interaction.offsetSeconds;
+        nextStart = clamp(nextStart, 0, Math.max(safeDuration - durationSeconds, 0));
+        const nextEnd = nextStart + durationSeconds;
+        onUpdateCue?.(interaction.index, { start: nextStart, end: nextEnd });
+      }
+
+      if (interaction.mode === "start") {
+        const nextStart = clamp(Math.min(nextTime, cue.end - minCueDuration), 0, cue.end - minCueDuration);
+        onUpdateCue?.(interaction.index, { start: nextStart });
+      }
+
+      if (interaction.mode === "end") {
+        const nextEnd = clamp(Math.max(nextTime, cue.start + minCueDuration), cue.start + minCueDuration, safeDuration);
+        onUpdateCue?.(interaction.index, { end: nextEnd });
+      }
+    };
+
+    const handlePointerUp = () => {
+      interactionRef.current = null;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+  }, [cues, onUpdateCue, pixelsPerSecond, safeDuration]);
 
   return (
     <div className="timeline-editor">
@@ -158,18 +209,45 @@ function TimelineEditor({
                   .filter(Boolean)
                   .join(" ")}
                 style={{ left: `${left}px`, width: `${width}px` }}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  interactionRef.current = {
+                    mode: "move",
+                    index,
+                    offsetSeconds:
+                      ((event.clientX - (trackScrollRef.current?.getBoundingClientRect().left || 0) +
+                        (trackScrollRef.current?.scrollLeft || 0)) /
+                        pixelsPerSecond) -
+                      cueStart,
+                  };
+                }}
                 onClick={() => {
                   onSelectCue?.(index);
                   onSeek?.(cueStart, index);
                 }}
                 title={`Start Time: ${formatTime(cueStart)}\nEnd Time: ${formatTime(cueEnd)}\nDuration: ${formatTime(cueDuration)}\nSubtitle Text: ${cue.text || ""}`}
               >
+                <span
+                  className="timeline-editor__handle timeline-editor__handle--start"
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                    interactionRef.current = { mode: "start", index };
+                  }}
+                />
                 <span className="timeline-editor__block-label">
                   {label || "Subtitle"}
                 </span>
+                <span
+                  className="timeline-editor__handle timeline-editor__handle--end"
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                    interactionRef.current = { mode: "end", index };
+                  }}
+                />
               </button>
             );
           })}
+          <Waveform peaks={waveformPeaks} duration={safeDuration} zoom={zoom} currentTime={currentTime} />
         </div>
       </div>
     </div>

@@ -1889,10 +1889,61 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 35%, transparent);
 }
 
+.timeline-editor__handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  background: color-mix(in srgb, var(--text-primary) 18%, transparent);
+  cursor: ew-resize;
+}
+
+.timeline-editor__handle--start {
+  left: 0;
+  border-radius: 10px 0 0 10px;
+}
+
+.timeline-editor__handle--end {
+  right: 0;
+  border-radius: 0 10px 10px 0;
+}
+
 .timeline-editor__block-label {
   display: inline-flex;
   align-items: center;
   height: 100%;
   font-size: 12px;
   font-weight: 700;
+}
+
+.waveform {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 4px;
+  height: 22px;
+  pointer-events: none;
+  opacity: 0.72;
+}
+
+.waveform__track {
+  position: relative;
+  height: 100%;
+}
+
+.waveform__bar {
+  position: absolute;
+  bottom: 0;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 80%, #ffffff), color-mix(in srgb, var(--accent) 50%, transparent));
+}
+
+.waveform__playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--text-primary) 60%, transparent);
 }
