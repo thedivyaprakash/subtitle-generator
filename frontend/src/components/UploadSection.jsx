@@ -42,9 +42,11 @@ function UploadSection() {
   const [isVideoPlaying, setIsVideoPlaying] = useState(true);
   const [videoSeek, setVideoSeek] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
+  const [timelineZoom, setTimelineZoom] = useState(100);
   const [waveformPeaks, setWaveformPeaks] = useState([]);
   const [history, setHistory] = useState({ past: [], future: [] });
   const videoRef = useRef(null);
+  const projectFileInputRef = useRef(null);
   const historySkipRef = useRef(false);
   const lastHistorySnapshotRef = useRef(null);
 
@@ -216,11 +218,7 @@ function UploadSection() {
   };
 
   const updateSubtitleCues = (nextCues, nextSelectedIndex = selectedSubtitleIndex) => {
-    const normalizedCues = nextCues.map((cue, index) => ({
-      start: Math.max(0, Number(cue.start) || 0),
-      end: Math.max(Number(cue.start) || 0, Number(cue.end) || 0),
-      text: String(cue.text || "").trim(),
-    }));
+    const normalizedCues = normalizeCues(nextCues);
     writeCuesToSubtitleContent(normalizedCues);
     setSelectedSubtitleIndex(
       Math.max(0, Math.min(nextSelectedIndex, Math.max(0, normalizedCues.length - 1)))
@@ -360,6 +358,121 @@ function UploadSection() {
       .join("\n")
       .trim();
     setSubtitleContent(nextSubtitleContent);
+  };
+
+  const normalizeCues = (nextCues = []) => {
+    let previousEnd = 0;
+    return nextCues.map((cue) => {
+      const start = Math.max(previousEnd, Number(cue.start) || 0);
+      const end = Math.max(start + 0.01, Number(cue.end) || start + 0.01);
+      previousEnd = end;
+      return {
+        start,
+        end,
+        text: String(cue.text || "").trim(),
+      };
+    });
+  };
+
+  const buildProjectPayload = () => ({
+    version: 1,
+    savedAt: new Date().toISOString(),
+    subtitles: subtitleContent,
+    subtitleWords,
+    waveformPeaks,
+    editorStyles: {
+      fontName,
+      fontWeight,
+      fontColor,
+      fontSize,
+      outline,
+      outlineEnabled,
+      outlineColor,
+      shadow,
+      shadowEnabled,
+      backColor,
+      backgroundEnabled,
+      position,
+      highlightColor,
+      highlightMode,
+      animation,
+    },
+    subtitleMode,
+    timelineZoom,
+    selectedCue: selectedSubtitleIndex,
+    template: subtitlePreset,
+    videoPath,
+    subtitlePath,
+  });
+
+  const applyProjectPayload = (payload = {}) => {
+    if (!payload || typeof payload !== "object") {
+      throw new Error("Invalid project format.");
+    }
+    if (payload.version !== 1) {
+      throw new Error("Unsupported project version.");
+    }
+    const editorStyles = payload.editorStyles || {};
+    setSubtitleContent(String(payload.subtitles || ""));
+    setSubtitleWords(Array.isArray(payload.subtitleWords) ? payload.subtitleWords : []);
+    setWaveformPeaks(Array.isArray(payload.waveformPeaks) ? payload.waveformPeaks : []);
+    setSubtitleMode(payload.subtitleMode || "original");
+    setTimelineZoom(Number(payload.timelineZoom) || 100);
+    setSelectedSubtitleIndex(Number(payload.selectedCue) || 0);
+    setSubtitlePreset(payload.template || "");
+    setVideoPath(payload.videoPath || "");
+    setSubtitlePath(payload.subtitlePath || "");
+    setFontName(editorStyles.fontName || "Poppins");
+    setFontWeight(editorStyles.fontWeight || "Regular");
+    setFontColor(editorStyles.fontColor || "#ffffff");
+    setFontSize(Number(editorStyles.fontSize) || 48);
+    setOutline(Number(editorStyles.outline) || 2);
+    setOutlineEnabled(Boolean(editorStyles.outlineEnabled));
+    setOutlineColor(editorStyles.outlineColor || "#000000");
+    setShadow(Number(editorStyles.shadow) || 1);
+    setShadowEnabled(Boolean(editorStyles.shadowEnabled));
+    setBackColor(editorStyles.backColor || "#000000");
+    setBackgroundEnabled(Boolean(editorStyles.backgroundEnabled));
+    setPosition(editorStyles.position || "bottom");
+    setHighlightColor(editorStyles.highlightColor || "#ffff00");
+    setHighlightMode(editorStyles.highlightMode || "current");
+    setAnimation(editorStyles.animation || "none");
+    setVideoSeek(0);
+    setIsVideoPlaying(false);
+    setShowDownload(false);
+    setSuccessMessage("");
+    setFinalVideoPath("");
+    setGeneratedSrtPath("");
+    historySkipRef.current = true;
+  };
+
+  const saveProject = () => {
+    const projectJson = JSON.stringify(buildProjectPayload(), null, 2);
+    const blob = new Blob([projectJson], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `subtitle-project-${Date.now()}.subtitle`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const openProject = () => {
+    projectFileInputRef.current?.click();
+  };
+
+  const handleProjectFileChange = async (event) => {
+    const projectFile = event.target.files?.[0];
+    if (!projectFile) return;
+    try {
+      const text = await projectFile.text();
+      const payload = JSON.parse(text);
+      applyProjectPayload(payload);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to open project file.");
+    } finally {
+      event.target.value = "";
+    }
   };
 
   useEffect(() => {
@@ -624,6 +737,11 @@ function UploadSection() {
       if (isTypingTarget) return;
 
       const key = event.key.toLowerCase();
+      if (key === "escape") {
+        event.preventDefault();
+        setSelectedSubtitleIndex(-1);
+        return;
+      }
       if (key === "delete") {
         event.preventDefault();
         deleteSelectedCue();
@@ -676,6 +794,13 @@ function UploadSection() {
 
   return (
     <main className="subtitle-page subtitle-page--desktop">
+      <input
+        ref={projectFileInputRef}
+        type="file"
+        accept=".json,.subtitle,application/json"
+        style={{ display: "none" }}
+        onChange={handleProjectFileChange}
+      />
       <header className="subtitle-hero subtitle-hero--sticky">
         <div>
           <p className="eyebrowH">Subtitle Studio</p>
@@ -750,6 +875,12 @@ function UploadSection() {
                 <button type="button" className="ghost-button" onClick={() => setIsVideoPlaying(false)}>
                   Pause
                 </button>
+                <button type="button" className="ghost-button" onClick={openProject}>
+                  Open Project
+                </button>
+                <button type="button" className="ghost-button" onClick={saveProject}>
+                  Save Project
+                </button>
               </div>
             </div>
             <div className="preview-frame preview-frame--large preview-frame--editor">
@@ -805,6 +936,8 @@ function UploadSection() {
               duration={videoDuration}
               selectedIndex={selectedSubtitleIndex}
               waveformPeaks={waveformPeaks}
+              zoom={timelineZoom}
+              onZoomChange={setTimelineZoom}
               onUpdateCue={(index, nextCue) => {
                 const nextCues = subtitleCues.map((cue, cueIndex) =>
                   cueIndex === index ? { ...cue, ...nextCue } : cue

@@ -7,6 +7,8 @@ function TimelineEditor({
   duration = 0,
   selectedIndex = -1,
   waveformPeaks = [],
+  zoom: controlledZoom,
+  onZoomChange,
   onSeek,
   onSelectCue,
   onTogglePlay,
@@ -16,7 +18,13 @@ function TimelineEditor({
   const trackScrollRef = useRef(null);
   const playheadRef = useRef(null);
   const interactionRef = useRef(null);
-  const [zoom, setZoom] = useState(100);
+  const [zoom, setZoom] = useState(controlledZoom || 100);
+
+  useEffect(() => {
+    if (typeof controlledZoom === "number") {
+      setZoom(controlledZoom);
+    }
+  }, [controlledZoom]);
 
   const rulerMarks = useMemo(() => {
     if (!safeDuration) return [0];
@@ -154,7 +162,10 @@ function TimelineEditor({
             key={value}
             type="button"
             className={`tab-button ${zoom === value ? "tab-button--active" : ""}`}
-            onClick={() => setZoom(value)}
+            onClick={() => {
+              setZoom(value);
+              onZoomChange?.(value);
+            }}
           >
             {value}%
           </button>
@@ -177,6 +188,11 @@ function TimelineEditor({
         <div
           className="timeline-editor__track"
           style={{ width: `${Math.max(safeDuration * pixelsPerSecond, 100)}px` }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              onSelectCue?.(-1);
+            }
+          }}
         >
           <div
             ref={playheadRef}

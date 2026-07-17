@@ -1,0 +1,21 @@
+[Script Info]
+ScriptType: v4.00+
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+PlayResX: 1920
+PlayResY: 1080
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Poppins,60,&H00ffffff&,&H000404be&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,80,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.22,0:00:02.74,Default,,0,0,0,,{\kf44}माननीय {\kf50}प्रधानमंत्री {\kf36}नरेंद्र {\kf20}मोदी {\kf16}जी {\kf32}के {\kf24}नेतृत्व
+Dialogue: 0,0:00:02.74,0:00:05.38,Default,,0,0,0,,{\kf36}भारत {\kf24}की {\kf50}संस्कृति {\kf24}को {\kf32}दुनिया {\kf40}में {\kf28}पहुंचाने
+Dialogue: 0,0:00:05.38,0:00:10.07,Default,,0,0,0,,{\kf50}काम {\kf28}यह {\kf40}इक्कीस {\kf32}जून {\kf48}अंतरराष्ट्रीय {\kf48}योगा {\kf50}दिवस
+Dialogue: 0,0:00:10.09,0:00:13.05,Default,,0,0,0,,{\kf32}दुनिया {\kf50}नदी {\kf28}एक {\kf44}सौ {\kf20}नब्बे {\kf32}से {\kf16}ऊपर
+Dialogue: 0,0:00:13.05,0:00:16.64,Default,,0,0,0,,{\kf20}में {\kf35}आज {\kf44}योग {\kf28}जो {\kf48}धर्म {\kf32}आध्यात्मिक {\kf24}के
+Dialogue: 0,0:00:17.77,0:00:21.28,Default,,0,0,0,,{\kf44}सर्वे {\kf50}भवन {\kf28}की {\kf50}पर {\kf32}हुए {\kf36}दुनिया {\kf20}के
+Dialogue: 0,0:00:21.28,0:00:23.64,Default,,0,0,0,,{\kf40}माननीय {\kf50}प्रधानमंत्री {\kf20}मोदी {\kf12}जी {\kf24}के {\kf50}प्रयास {\kf12}जो
+Dialogue: 0,0:00:23.64,0:00:25.07,Default,,0,0,0,,{\kf16}है {\kf48}आदरणीय {\kf24}प्रताप
