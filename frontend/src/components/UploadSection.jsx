@@ -526,7 +526,7 @@ function UploadSection() {
               </div>
               <span className="status-pill">{file ? file.name : "No file selected"}</span>
             </div>
-            <div className="upload-row upload-row--stack">
+            <div className="upload-stack">
               <Form.Control
                 className="file-input"
                 type="file"

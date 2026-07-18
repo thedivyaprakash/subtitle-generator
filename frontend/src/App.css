@@ -182,10 +182,26 @@
 
 .editor-layout {
   display: grid;
-  grid-template-columns: 18% 45% 37%;
-  gap: 18px;
+  grid-template-columns: minmax(270px, 290px) minmax(0, 1fr) minmax(300px, 320px);
+  gap: 22px;
   align-items: start;
   min-height: calc(100svh - 180px);
+}
+
+.editor-panel {
+  min-width: 0;
+}
+
+.editor-panel--left {
+  min-width: 270px;
+}
+
+.editor-panel--center {
+  min-width: 0;
+}
+
+.editor-panel--right {
+  min-width: 300px;
 }
 
 .editor-panel {
@@ -209,8 +225,8 @@
 }
 
 .editor-panel--left > .panel-card:first-child {
-  min-height: 174px;
-  overflow: hidden;
+  min-height: auto;
+  overflow: visible;
 }
 
 .panel-card--controls {
@@ -287,9 +303,14 @@
   width: 100%;
 }
 
+.upload-stack .primary-action {
+  margin-top: 2px;
+}
+
 .editor-panel--center .panel-card--preview {
   display: grid;
   gap: 16px;
+  min-width: 0;
 }
 
 .editor-panel--center .preview-frame--editor {
@@ -505,6 +526,7 @@
   top: 18px;
   max-height: calc(100svh - 36px);
   overflow: auto;
+  min-width: 0;
 }
 
 .upload-card__header {
@@ -618,8 +640,8 @@
   border: 0;
   border-radius: 10px;
   padding: 0 18px;
-  background: #101820;
-  color: #fff;
+  background: var(--button-bg);
+  color: var(--button-text);
   font-weight: 800;
   letter-spacing: 0;
   box-shadow: 0 12px 24px rgba(16, 24, 32, 0.18);
@@ -629,10 +651,10 @@
 .ghost-button,
 .tab-button,
 .template-card {
-  background: rgba(16, 24, 32, 0.08);
+  background: color-mix(in srgb, var(--button-bg) 14%, transparent);
   color: var(--text-h);
   box-shadow: none;
-  border: 1px solid rgba(16, 24, 32, 0.08);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
 }
 
 .primary-action:hover,
@@ -641,10 +663,10 @@
 .ghost-button:hover,
 .tab-button:hover,
 .template-card:hover {
-  background: #0f8f88;
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   color: #fff;
   transform: translateY(-1px);
-  box-shadow: 0 16px 28px rgba(15, 143, 136, 0.24);
+  box-shadow: 0 16px 28px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .template-card--active,
@@ -1527,11 +1549,13 @@
 
 @media (max-width: 1200px) {
   .editor-layout {
-    grid-template-columns: 1fr 1.2fr;
+    grid-template-columns: minmax(260px, 280px) minmax(0, 1fr);
+    gap: 20px;
   }
 
   .editor-panel--right {
     grid-column: 1 / -1;
+    min-width: 0;
   }
 }
 
