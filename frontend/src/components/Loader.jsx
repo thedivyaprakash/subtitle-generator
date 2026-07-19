@@ -22,7 +22,7 @@ const Loader = () => {
 const StyledWrapper = styled.div`
   .hourglassBackground {
     position: relative;
-    background-color: rgb(71, 60, 60);
+    background-color: #201927;
     height: 130px;
     width: 130px;
     border-radius: 50%;
@@ -213,7 +213,7 @@ const StyledWrapper = styled.div`
     position: absolute;
     left: 24px;
     width: 3px;
-    background-color: white;
+    background-color: #ffc24b;
     -webkit-animation: sandStream1 2s ease-in 0s infinite;
     animation: sandStream1 2s ease-in 0s infinite;
   }
@@ -226,7 +226,7 @@ const StyledWrapper = styled.div`
     left: 19px;
     border-left: 6px solid transparent;
     border-right: 6px solid transparent;
-    border-bottom: 6px solid #fff;
+    border-bottom: 6px solid #ffc24b;
     animation: sandStream2 2s ease-in 0s infinite;
   }
 
@@ -342,7 +342,7 @@ const StyledWrapper = styled.div`
     display: block;
     position: absolute;
     left: 6px;
-    background-color: white;
+    background-color: #ffc24b;
     perspective: 500px;
   }
 

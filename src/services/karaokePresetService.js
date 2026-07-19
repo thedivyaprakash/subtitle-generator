@@ -5,6 +5,9 @@ const karaokePresets = [
   { id: "news", name: "News" },
   { id: "gaming", name: "Gaming" },
   { id: "podcast", name: "Podcast" },
+  { id: "karaoke-word-fill", name: "Karaoke Word-Fill" },
+  { id: "static-boxed-bar", name: "Static Boxed Bar" },
+  { id: "plain-pop-in", name: "Plain Pop-In" },
 ];
 
 const getKaraokePresets = () => karaokePresets;
@@ -51,6 +54,27 @@ const getKaraokePresetDefaults = () => ({
     karaokeHighlightColor: "#FF8A00",
     position: "bottom",
     fontSize: 44,
+  },
+  "karaoke-word-fill": {
+    karaokeHighlightMode: "progressive",
+    karaokeAnimationMode: "none",
+    karaokeHighlightColor: "#FFB300",
+    position: "bottom",
+    fontSize: 52,
+  },
+  "static-boxed-bar": {
+    karaokeHighlightMode: "current",
+    karaokeAnimationMode: "pop",
+    karaokeHighlightColor: "#FF4500",
+    position: "bottom",
+    fontSize: 50,
+  },
+  "plain-pop-in": {
+    karaokeHighlightMode: "current",
+    karaokeAnimationMode: "pop",
+    karaokeHighlightColor: "#FFD700",
+    position: "bottom",
+    fontSize: 50,
   },
 });
 

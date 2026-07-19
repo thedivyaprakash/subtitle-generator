@@ -14,6 +14,7 @@ app.use(cors());
 app.use(express.json());
 app.use("/fonts", express.static(path.join(process.cwd(), "fonts")));
 app.use("/uploads", express.static(path.join(process.cwd(), "src", "uploads")));
+app.use("/audio", express.static(path.join(process.cwd(), "src", "temp")));
 
 app.use("/api/upload", uploadRoutes);
 app.use("/api/karaoke", karaokeRoutes);
@@ -26,5 +27,5 @@ app.get("/", (req, res) => {
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  //console.log(`Server running on port ${PORT}`);
 });

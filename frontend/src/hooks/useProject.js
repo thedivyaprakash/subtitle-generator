@@ -15,6 +15,7 @@ export default function useProject(state, setters) {
         timelineZoom: state.timelineZoom,
         selectedCue: state.selectedSubtitleIndex,
         template: state.subtitlePreset,
+        videoId: state.videoId,
         videoPath: state.videoPath,
         subtitlePath: state.subtitlePath,
       }),
@@ -40,6 +41,7 @@ export default function useProject(state, setters) {
     setters.setTimelineZoom(Number(payload.timelineZoom) || 100);
     setters.setSelectedSubtitleIndex(Number(payload.selectedCue) || 0);
     setters.setSubtitlePreset(payload.template || "");
+    setters.setVideoId(payload.videoId ?? null);
     setters.setVideoPath(payload.videoPath || "");
     setters.setSubtitlePath(payload.subtitlePath || "");
     setters.setFontName(editorStyles.fontName || "Poppins");

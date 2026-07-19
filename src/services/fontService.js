@@ -3,11 +3,15 @@ const path = require("path");
 
 const FONTS_DIR = path.join(process.cwd(), "fonts");
 const FONT_WEIGHT_SEGMENTS = {
+  thin: "Thin",
+  extralight: "ExtraLight",
+  light: "Light",
   regular: "Regular",
   medium: "Medium",
   semibold: "SemiBold",
   bold: "Bold",
   extrabold: "ExtraBold",
+  black: "Black",
 };
 
 const normalizeFontFamily = (family) => String(family || "").trim();
@@ -22,6 +26,10 @@ const normalizeFontWeight = (weight = "Regular") => {
   return "Regular";
 };
 
+// Derives each family's ACTUAL available weights from whatever .ttf files
+// exist on disk (e.g. "Teko-Light.ttf" -> "Light"), rather than assuming a
+// fixed weight set — so a new font folder with any subset of weights (or a
+// weight name not seen before) works without touching this code.
 const getFontFamilies = () => {
   if (!fs.existsSync(FONTS_DIR)) {
     return [];
@@ -30,7 +38,22 @@ const getFontFamilies = () => {
   return fs
     .readdirSync(FONTS_DIR, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name);
+    .map((entry) => {
+      const family = entry.name;
+      const familyDir = path.join(FONTS_DIR, family);
+      const weights = fs
+        .readdirSync(familyDir)
+        .filter((file) => file.toLowerCase().endsWith(".ttf"))
+        .map((file) => {
+          const base = path.basename(file, ".ttf");
+          const prefix = `${family}-`;
+          return base.startsWith(prefix) ? base.slice(prefix.length) : base;
+        })
+        .filter(Boolean);
+
+      return { family, weights };
+    })
+    .filter((entry) => entry.weights.length > 0);
 };
 
 const resolveFont = ({ family, weight } = {}) => {

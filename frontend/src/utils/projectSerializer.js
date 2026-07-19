@@ -9,6 +9,7 @@ export const createProjectPayload = ({
   timelineZoom = 100,
   selectedCue = 0,
   template = "",
+  videoId = null,
   videoPath = "",
   subtitlePath = "",
 } = {}) => ({
@@ -22,6 +23,7 @@ export const createProjectPayload = ({
   timelineZoom,
   selectedCue,
   template,
+  videoId,
   videoPath,
   subtitlePath,
 });

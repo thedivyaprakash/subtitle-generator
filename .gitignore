@@ -27,3 +27,15 @@ uploads/
 temp/
 output/
 generated/
+src/uploads/
+src/temp/
+src/subtitles/
+src/videos/
+src/db/*.db
+
+# Python cache (resolve-plugin)
+__pycache__/
+*.pyc
+
+# Stray Windows redirect artifact
+nul

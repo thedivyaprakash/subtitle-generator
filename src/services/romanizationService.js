@@ -1,5 +1,7 @@
+const { transliterate } = require("transliteration");
+
 const romanizeText = (text) => {
-  return text;
+  return transliterate(text);
 };
 
 module.exports = {

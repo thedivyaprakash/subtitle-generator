@@ -373,11 +373,81 @@ const srtTimeToSeconds = (srtTime) => {
   );
 };
 
+// Mirrors frontend/src/utils/emphasisUtils.js's parseEmphasis — manual
+// keyword emphasis is authored inline as "**word**" markup in the cue
+// text itself, so both sides must tokenize it identically.
+const parseEmphasisMarkup = (text = "") =>
+  String(text)
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => {
+      const match = token.match(/^\*\*(.+)\*\*$/);
+      return match
+        ? { word: match[1], emphasized: true }
+        : { word: token, emphasized: false };
+    });
+
 const escapeAssText = (text) =>
   String(text)
     .replace(/\\/g, "\\\\")
     .replace(/{/g, "\\{")
     .replace(/}/g, "\\}");
+
+// Seconds (float) → ASS time "H:MM:SS.CC"
+const secondsToAssTime = (seconds) => {
+  const totalCentiseconds = Math.max(0, Math.round(Number(seconds || 0) * 100));
+  const hours = Math.floor(totalCentiseconds / 360000);
+  const minutes = Math.floor((totalCentiseconds % 360000) / 6000);
+  const secs = Math.floor((totalCentiseconds % 6000) / 100);
+  const centiseconds = totalCentiseconds % 100;
+
+  return `${String(hours).padStart(1, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${String(centiseconds).padStart(2, "0")}`;
+};
+
+// Per-word or per-line "intro" animation: transforms FROM a start state TO
+// the resting state over a short window beginning at startMs (ms relative
+// to the Dialogue line's own start). Returns an ASS override block, or ""
+// for "none" — safe to prepend directly before a {\kf} block or text run.
+const buildAnimationTag = (mode, startMs, durationMs, options = {}) => {
+  const { glowColor } = options;
+  const introMs = Math.max(20, Math.min(Math.round(durationMs), 180));
+  const safeStart = Math.max(0, Math.round(startMs));
+
+  switch ((mode || "none").toLowerCase()) {
+    case "pop":
+      return `{\\t(${safeStart},${safeStart + 1},\\fscx120\\fscy120)\\t(${safeStart + 1},${safeStart + introMs},\\fscx100\\fscy100)}`;
+    case "bounce": {
+      const mid = safeStart + Math.round(introMs * 0.55);
+      return `{\\t(${safeStart},${safeStart + 1},\\fscx55\\fscy55)\\t(${safeStart + 1},${mid},\\fscx118\\fscy118)\\t(${mid},${safeStart + introMs},\\fscx100\\fscy100)}`;
+    }
+    case "fade":
+      return `{\\t(${safeStart},${safeStart + 1},\\alpha&HFF&)\\t(${safeStart + 1},${safeStart + introMs},\\alpha&H00&)}`;
+    case "zoom":
+      return `{\\t(${safeStart},${safeStart + 1},\\fscx70\\fscy70)\\t(${safeStart + 1},${safeStart + introMs},\\fscx100\\fscy100)}`;
+    case "neon":
+      return `{\\bord4\\blur6\\3c${glowColor || "&H00FFFFFF&"}}`;
+    default:
+      return "";
+  }
+};
+
+// "slide" (and any future move-based effect) is always applied once per
+// Dialogue line, not per word — computed from the caption's alignment so
+// it actually slides toward wherever it rests, not a fixed screen spot.
+const buildSlideTag = (alignment, marginV) => {
+  const centerX = 960;
+  const restY =
+    Number(alignment) === 8
+      ? 60 + Number(marginV || 80)
+      : Number(alignment) === 5
+        ? 540
+        : 1080 - Number(marginV || 80);
+  const startY = Number(alignment) === 8 ? restY - 110 : restY + 110;
+  return `{\\move(${centerX},${startY},${centerX},${restY})}`;
+};
+
+const isLineLevelAnimation = (mode) =>
+  ["slide", "neon"].includes(String(mode || "").toLowerCase());
 
 const buildAssDocument = ({
   resolvedFont,
@@ -447,6 +517,8 @@ const generateAss = (srtContent, options = {}) => {
     alignment    = 2,             // 2 = bottom center
     backgroundEnabled = false,
     marginV      = 80,
+    animationMode = "none",
+    highlightColor = "&H0000FFFF&",
   } = options;
 
   const resolvedFont = resolveFont({
@@ -459,12 +531,39 @@ const generateAss = (srtContent, options = {}) => {
       : 0;
   const borderStyle = backgroundEnabled ? 3 : 1;
 
+  // Renders manual "**word**" keyword emphasis (bigger + highlight color)
+  // per word, reverting explicitly afterward rather than via \r so it
+  // doesn't clobber a line-level animation tag (e.g. neon) already active
+  // on the same Dialogue line.
+  const buildEmphasisAwareText = (text) =>
+    String(text)
+      .split("\\N")
+      .map((line) =>
+        parseEmphasisMarkup(line)
+          .map(({ word, emphasized }) =>
+            emphasized
+              ? `{\\fscx130\\fscy130\\1c${highlightColor}}${escapeAssText(word)}{\\fscx100\\fscy100\\1c${primaryColor}}`
+              : escapeAssText(word)
+          )
+          .join(" ")
+      )
+      .join("\\N");
+
   const entries = parseSrt(srtContent);
   const dialogues = entries
-    .map(
-      (e) =>
-        `Dialogue: 0,${srtTimeToAss(e.start)},${srtTimeToAss(e.end)},Default,,0,0,0,,${e.text}`
-    )
+    .map((e) => {
+      const lineDurationMs = Math.max(
+        1,
+        (srtTimeToSeconds(e.end) - srtTimeToSeconds(e.start)) * 1000
+      );
+      const animationTag = isLineLevelAnimation(animationMode)
+        ? animationMode.toLowerCase() === "slide"
+          ? buildSlideTag(alignment, marginV)
+          : buildAnimationTag("neon", 0, lineDurationMs, { glowColor: primaryColor })
+        : buildAnimationTag(animationMode, 0, lineDurationMs);
+
+      return `Dialogue: 0,${srtTimeToAss(e.start)},${srtTimeToAss(e.end)},Default,,0,0,0,,${animationTag}${buildEmphasisAwareText(e.text)}`;
+    })
     .join("\n");
   const assContent = buildAssDocument({
     resolvedFont,
@@ -522,56 +621,6 @@ const generateKaraokeAss = (words = [], options = {}) => {
       ? -1
       : 0;
   const borderStyle = backgroundEnabled ? 3 : 1;
-  const toCentiseconds = (seconds) =>
-    Math.max(1, Math.round(Number(seconds || 0) * 100));
-
-  const secondsToAssTime = (seconds) => {
-    const totalCentiseconds = Math.max(
-      0,
-      Math.round(Number(seconds || 0) * 100)
-    );
-    const hours = Math.floor(totalCentiseconds / 360000);
-    const minutes = Math.floor((totalCentiseconds % 360000) / 6000);
-    const secs = Math.floor((totalCentiseconds % 6000) / 100);
-    const centiseconds = totalCentiseconds % 100;
-
-    return `${String(hours).padStart(1, "0")}:${String(minutes).padStart(
-      2,
-      "0"
-    )}:${String(secs).padStart(2, "0")}.${String(centiseconds).padStart(
-      2,
-      "0"
-    )}`;
-  };
-
-  const escapeAssText = (text) =>
-    String(text)
-      .replace(/\\/g, "\\\\")
-      .replace(/{/g, "\\{")
-      .replace(/}/g, "\\}");
-
-  const buildColorOverride = (tag, color) => {
-    const safeColor = color || "&H00FFFFFF&";
-    return `{\\${tag}${safeColor}}`;
-  };
-
-  const wrapWithAnimation = (text) => {
-    switch ((animationMode || "none").toLowerCase()) {
-      case "pop":
-        return `{\\fscx120\\fscy120\\t(0,120,\\fscx100\\fscy100)}${text}`;
-      case "fade":
-        return `{\\alpha&HFF&\\t(0,180,\\alpha&H00&)}${text}`;
-      case "zoom":
-        return `{\\fscx70\\fscy70\\t(0,180,\\fscx100\\fscy100)}${text}`;
-      case "slide":
-        return `{\\move(960,1120,960,980)}${text}`;
-      default:
-        return text;
-    }
-  };
-
-  const cueTextColor = buildColorOverride("1c", primaryColor);
-  const cueHighlightColor = buildColorOverride("2c", highlightColor);
 
   const validWords = Array.isArray(words)
     ? words.filter((word) => word && word.word)
@@ -620,13 +669,45 @@ const generateKaraokeAss = (words = [], options = {}) => {
       return [];
     }
 
+    const lineLevel = isLineLevelAnimation(animationMode);
+    const lineDurationMs = Math.max(
+      1,
+      (srtTimeToSeconds(cue.end) - srtTimeToSeconds(cue.start)) * 1000
+    );
+    const lineAnimationTag = lineLevel
+      ? animationMode.toLowerCase() === "slide"
+        ? buildSlideTag(alignment, marginV)
+        : buildAnimationTag("neon", 0, lineDurationMs, { glowColor: primaryColor })
+      : "";
+
+    let cumulativeMs = 0;
     const dialogueText = normalizedWords
-      .map((word) => {
+      .map((word, index) => {
         const duration = Math.max(
           1,
           Math.round((Number(word.end) - Number(word.start)) * 100)
         );
-        return `{\\kf${duration}}${escapeAssText(word.word)}`;
+        const wordStartMs = cumulativeMs;
+        const wordDurationMs = duration * 10;
+        const wordEndMs = wordStartMs + wordDurationMs;
+        cumulativeMs = wordEndMs;
+
+        const perWordTag = lineLevel
+          ? ""
+          : buildAnimationTag(animationMode, wordStartMs, wordDurationMs);
+        const prefix = index === 0 ? lineAnimationTag + perWordTag : perWordTag;
+
+        // "progressive" uses ASS's native \kf sweep, which naturally keeps
+        // already-spoken words highlighted. "current" instead only highlights
+        // a word during its own window, then reverts — \kf can't express
+        // that (it never un-highlights), so it's done via explicit \1c color
+        // transforms timed off the same wordStartMs/wordEndMs used above.
+        const karaokeTag =
+          highlightMode === "progressive"
+            ? `{\\kf${duration}}`
+            : `{\\t(${wordStartMs},${wordStartMs + 1},\\1c${highlightColor})\\t(${wordEndMs},${wordEndMs + 1},\\1c${primaryColor})}`;
+
+        return `${prefix}${karaokeTag}${escapeAssText(word.word)}`;
       })
       .join(" ");
 
@@ -722,16 +803,33 @@ const generateAssFromPreview = (previewModel = {}) => {
     style.position === "top" ? 8 : style.position === "center" ? 5 : 2;
   const marginV = 80;
 
+  const animationMode = style.animation || "none";
+
   const buildCueDialogue = (cue, cueWords) => {
     const normalizedWords = cueWords.length ? cueWords : previewWords;
 
+    const lineLevel = isLineLevelAnimation(animationMode);
+    const lineDurationMs = Math.max(1, (Number(cue.end) - Number(cue.start)) * 1000);
+    const lineAnimationTag = lineLevel
+      ? animationMode.toLowerCase() === "slide"
+        ? buildSlideTag(alignment, marginV)
+        : buildAnimationTag("neon", 0, lineDurationMs, { glowColor: primaryColor })
+      : "";
+
+    let cumulativeMs = 0;
     const dialogueText = normalizedWords
-      .map((word) => {
+      .map((word, index) => {
         const duration = Math.max(
           1,
           Math.round((Number(word.end) - Number(word.start)) * 100)
         );
-        return `{\\kf${duration}}${escapeAssText(word.word)}`;
+        const wordStartMs = cumulativeMs;
+        cumulativeMs += duration * 10;
+
+        const perWordTag = lineLevel ? "" : buildAnimationTag(animationMode, wordStartMs, duration * 10);
+        const prefix = index === 0 ? lineAnimationTag + perWordTag : perWordTag;
+
+        return `${prefix}{\\kf${duration}}${escapeAssText(word.word)}`;
       })
       .join(" ");
 

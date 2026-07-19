@@ -2,6 +2,18 @@ import { useMemo, useState } from "react";
 import TemplateCard from "./TemplateCard";
 import subtitleTemplates from "../data/subtitleTemplates";
 
+const TEMPLATE_NAME_OVERRIDES = {
+  "instagram-reel": "Instagram Reel",
+  "youtube-shorts": "YouTube Shorts",
+  netflix: "Netflix",
+};
+
+const idToTitleCase = (id) =>
+  id
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+
 const TEMPLATE_GROUPS = {
   All: () => true,
   Social: (template) => ["instagram-reel", "youtube-shorts"].includes(template.id),
@@ -27,17 +39,11 @@ function TemplateGallery({ selectedTemplateId, onSelectTemplate }) {
           highlightColor: "#ffff00",
           animation: "none",
           position: "bottom",
+          previewText: "no template selected",
         },
         ...Object.entries(subtitleTemplates).map(([id, template]) => ({
           id,
-          name:
-            id === "instagram-reel"
-              ? "Instagram Reel"
-              : id === "youtube-shorts"
-                ? "YouTube Shorts"
-                : id === "netflix"
-                  ? "Netflix"
-                  : id.charAt(0).toUpperCase() + id.slice(1),
+          name: TEMPLATE_NAME_OVERRIDES[id] || idToTitleCase(id),
           ...template,
         })),
       ],

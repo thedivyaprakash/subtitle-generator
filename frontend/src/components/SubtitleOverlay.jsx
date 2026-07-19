@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { parseEmphasis } from "../utils/emphasisUtils";
 
 function SubtitleOverlay({
   text = "",
@@ -11,10 +12,7 @@ function SubtitleOverlay({
   animation = "none",
 })
 {
-  const fallbackWords = useMemo(
-    () => String(text).split(/\s+/).filter(Boolean),
-    [text]
-  );
+  const fallbackWords = useMemo(() => parseEmphasis(text), [text]);
 
   if (!words.length && !fallbackWords.length) {
     return null;
@@ -28,7 +26,8 @@ function SubtitleOverlay({
       )
     : -1;
 
-  const renderWords = words.length ? words : fallbackWords;
+  const karaokeMode = subtitleMode === "karaoke" && words.length;
+  const renderWords = karaokeMode ? words : fallbackWords;
 
   return (
     <>
@@ -37,14 +36,13 @@ function SubtitleOverlay({
           typeof word === "string"
             ? word
             : word.word || word.text || "";
-        const karaokeMode = subtitleMode === "karaoke" && words.length;
         const isActive = karaokeMode
           ? activeWordIndex >= 0
             ? highlightMode === "progressive"
               ? index <= activeWordIndex
               : index === activeWordIndex
             : false
-          : false;
+          : Boolean(word.emphasized);
         const isAnimated = karaokeMode && isActive && animation !== "none";
 
         return (
@@ -53,6 +51,7 @@ function SubtitleOverlay({
             className={[
               "preview-word",
               isActive ? "preview-word--active" : "",
+              !karaokeMode && isActive ? "preview-word--emphasized" : "",
               isAnimated ? `preview-word--animation-${animation}` : "",
             ]
               .filter(Boolean)

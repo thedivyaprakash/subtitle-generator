@@ -1,10 +1,40 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import api from "../services/api";
+import { transliterate } from "transliteration";
+import api, { pollVideoStatus } from "../services/api";
 import { Form, Button } from "react-bootstrap";
+import {
+  Upload as UploadIcon,
+  Play,
+  Pause,
+  FolderOpen,
+  Save,
+  Plus,
+  Trash2,
+  Scissors,
+  Combine,
+  Copy,
+  Wand2,
+  FileText,
+  Download,
+  CheckCircle2,
+  AlertCircle,
+  User,
+  ChevronDown,
+  Ban,
+  Sparkles,
+  Blend,
+  ZoomIn,
+  MoveHorizontal,
+  Waves,
+  Flame,
+} from "lucide-react";
 import "../App.css";
 import Loader from "./Loader";
 import SubtitleOverlay from "./SubtitleOverlay";
 import TimelineEditor from "./TimelineEditor";
+import TemplateGallery from "./TemplateGallery";
+import ColorSwatchRow from "./ColorSwatchRow";
+import subtitleTemplates from "../data/subtitleTemplates";
 import useTimeline from "../hooks/useTimeline";
 import useUndoRedo from "../hooks/useUndoRedo";
 import useWaveform from "../hooks/useWaveform";
@@ -12,16 +42,63 @@ import useProject from "../hooks/useProject";
 import {
   buildSubtitleCueList,
 } from "../utils/subtitleUtils";
+import { getRtlTextStyle, getRtlCaptionStyle } from "../utils/textDirection";
+import { parseEmphasis, toggleWordEmphasis } from "../utils/emphasisUtils";
+
+const FONT_WEIGHT_NUMBERS = {
+  Thin: 100,
+  ExtraLight: 200,
+  Light: 300,
+  Regular: 400,
+  Medium: 500,
+  SemiBold: 600,
+  Bold: 700,
+  ExtraBold: 800,
+  Black: 900,
+};
+
+const ANIMATION_PRESETS = [
+  { id: "none", label: "None", Icon: Ban },
+  { id: "pop", label: "Pop", Icon: Sparkles },
+  { id: "fade", label: "Fade", Icon: Blend },
+  { id: "zoom", label: "Zoom", Icon: ZoomIn },
+  { id: "slide", label: "Slide", Icon: MoveHorizontal },
+  { id: "bounce", label: "Bounce", Icon: Waves },
+  { id: "neon", label: "Neon", Icon: Flame },
+];
+
+function AccordionSection({ title, defaultOpen, children }) {
+  return (
+    <details className="inspector-accordion__item" open={defaultOpen}>
+      <summary className="inspector-accordion__summary">
+        <span className="inspector-accordion__icon">
+          <ChevronDown size={14} />
+        </span>
+        {title}
+      </summary>
+      <div className="inspector-accordion__body">
+        <div className="settings-grid settings-grid--single">{children}</div>
+      </div>
+    </details>
+  );
+}
 
 function UploadSection() {
   const [file, setFile] = useState(null);
+  const [language, setLanguage] = useState("hi");
   const [subtitleContent, setSubtitleContent] = useState("");
   const [subtitlePath, setSubtitlePath] = useState("");
   const [subtitleWords, setSubtitleWords] = useState([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [videoId, setVideoId] = useState(null);
   const [videoPath, setVideoPath] = useState("");
+  const [denoisedAudioPath, setDenoisedAudioPath] = useState("");
+  const [useEnhancedAudio, setUseEnhancedAudio] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [subtitleMode, setSubtitleMode] = useState("original");
+  const [translatedSubtitleContent, setTranslatedSubtitleContent] = useState("");
+  const [translatedSourceContent, setTranslatedSourceContent] = useState("");
+  const [isTranslating, setIsTranslating] = useState(false);
   const [subtitlePreset, setSubtitlePreset] = useState("");
   const [highlightMode, setHighlightMode] = useState("current");
   const [highlightColor, setHighlightColor] = useState("#ffff00");
@@ -43,7 +120,8 @@ function UploadSection() {
   const [successMessage, setSuccessMessage] = useState("");
   const [finalVideoPath, setFinalVideoPath] = useState("");
   const [generatedSrtPath, setGeneratedSrtPath] = useState("");
-  const [activeTab, setActiveTab] = useState("text");
+  const [activeTab, setActiveTab] = useState("templates");
+  const [toast, setToast] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedSubtitleIndex, setSelectedSubtitleIndex] = useState(0);
   const [isVideoPlaying, setIsVideoPlaying] = useState(true);
@@ -60,6 +138,10 @@ function UploadSection() {
         : `http://localhost:5000/uploads/${videoPath.split(/[\\/]/).pop()}`
     : "";
 
+  const denoisedAudioUrl = denoisedAudioPath
+    ? `http://localhost:5000/audio/${denoisedAudioPath.split(/[\\/]/).pop()}`
+    : "";
+
   useEffect(() => {
     const loadFonts = async () => {
       const response = await api.get("/api/fonts");
@@ -68,8 +150,19 @@ function UploadSection() {
     loadFonts();
   }, []);
 
+  const availableWeights = useMemo(() => {
+    const weights = fonts.find((font) => font.family === fontName)?.weights;
+    return weights && weights.length ? weights : ["Regular"];
+  }, [fonts, fontName]);
+
   useEffect(() => {
-    if (!fontName) return;
+    if (!availableWeights.includes(fontWeight)) {
+      setFontWeight(availableWeights.includes("Regular") ? "Regular" : availableWeights[0]);
+    }
+  }, [availableWeights, fontWeight]);
+
+  useEffect(() => {
+    if (!fontName || !availableWeights.length) return;
 
     const styleId = "preview-font-face";
     const previousStyle = document.getElementById(styleId);
@@ -77,24 +170,44 @@ function UploadSection() {
 
     const style = document.createElement("style");
     style.id = styleId;
-    style.textContent = `
-      @font-face { font-family: "${fontName}"; src: url("http://localhost:5000/fonts/${fontName}/${fontName}-Regular.ttf") format("truetype"); font-weight: 400; font-style: normal; }
-      @font-face { font-family: "${fontName}"; src: url("http://localhost:5000/fonts/${fontName}/${fontName}-Medium.ttf") format("truetype"); font-weight: 500; font-style: normal; }
-      @font-face { font-family: "${fontName}"; src: url("http://localhost:5000/fonts/${fontName}/${fontName}-SemiBold.ttf") format("truetype"); font-weight: 600; font-style: normal; }
-      @font-face { font-family: "${fontName}"; src: url("http://localhost:5000/fonts/${fontName}/${fontName}-Bold.ttf") format("truetype"); font-weight: 700; font-style: normal; }
-      @font-face { font-family: "${fontName}"; src: url("http://localhost:5000/fonts/${fontName}/${fontName}-ExtraBold.ttf") format("truetype"); font-weight: 800; font-style: normal; }
-    `;
+    style.textContent = availableWeights
+      .map(
+        (weight) =>
+          `@font-face { font-family: "${fontName}"; src: url("http://localhost:5000/fonts/${fontName}/${fontName}-${weight}.ttf") format("truetype"); font-weight: ${FONT_WEIGHT_NUMBERS[weight] || 400}; font-style: normal; }`
+      )
+      .join("\n");
     document.head.appendChild(style);
     return () => style.remove();
-  }, [fontName]);
+  }, [fontName, availableWeights]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 5000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  const showToast = useCallback((message, tone = "success") => {
+    setToast({ message, tone });
+  }, []);
+
+  const displaySubtitleContent = useMemo(() => {
+    if (subtitleMode === "romanized") return transliterate(subtitleContent);
+    if (subtitleMode === "translated") return translatedSubtitleContent || subtitleContent;
+    return subtitleContent;
+  }, [subtitleMode, subtitleContent, translatedSubtitleContent]);
+
+  const translatedCues = useMemo(
+    () => buildSubtitleCueList(translatedSubtitleContent),
+    [translatedSubtitleContent]
+  );
 
   const subtitleLines = useMemo(
     () =>
-      subtitleContent
+      displaySubtitleContent
         .split("\n")
         .map((line) => line.trim())
         .filter((line) => line && !line.includes("-->") && !/^\d+$/.test(line)),
-    [subtitleContent]
+    [displaySubtitleContent]
   );
 
   const {
@@ -120,7 +233,21 @@ function UploadSection() {
     [searchTerm, subtitleLines]
   );
 
-  const activeCueText = activeCue?.text || subtitleLines[0] || "";
+  const activeCueText = useMemo(() => {
+    const rawText = activeCue?.text || "";
+    if (!rawText) return "";
+    if (subtitleMode === "romanized") return transliterate(rawText);
+    if (subtitleMode === "translated") {
+      const cueIndex = subtitleCues.indexOf(activeCue);
+      return translatedCues[cueIndex]?.text || rawText;
+    }
+    return rawText;
+  }, [activeCue, subtitleCues, subtitleMode, translatedCues]);
+
+  const selectedCueEmphasisTokens = useMemo(
+    () => parseEmphasis(subtitleCues[selectedSubtitleIndex]?.text || ""),
+    [subtitleCues, selectedSubtitleIndex]
+  );
 
   const splitSelectedCue = useCallback(() => {
     const cues = buildSubtitleCueList(subtitleContent);
@@ -186,6 +313,84 @@ function UploadSection() {
     updateSubtitleCues(nextCues, selectedSubtitleIndex + 1);
   }, [selectedSubtitleIndex, subtitleContent, updateSubtitleCues]);
 
+  const toggleEmphasisOnWord = useCallback(
+    (wordIndex) => {
+      const cues = buildSubtitleCueList(subtitleContent);
+      const cue = cues[selectedSubtitleIndex];
+      if (!cue) return;
+
+      const nextCues = cues.map((item, index) =>
+        index === selectedSubtitleIndex
+          ? { ...item, text: toggleWordEmphasis(item.text, wordIndex) }
+          : item
+      );
+
+      updateSubtitleCues(nextCues, selectedSubtitleIndex);
+    },
+    [selectedSubtitleIndex, subtitleContent, updateSubtitleCues]
+  );
+
+  const handleSubtitleModeChange = useCallback(
+    async (mode) => {
+      if (mode === "translated" && translatedSourceContent !== subtitleContent) {
+        setIsTranslating(true);
+        try {
+          const response = await api.post("/api/upload/translate", {
+            subtitleContent,
+            sourceLanguage: language,
+          });
+          setTranslatedSubtitleContent(response.data.translatedContent);
+          setTranslatedSourceContent(subtitleContent);
+        } catch {
+          showToast("Translation failed", "error");
+          setIsTranslating(false);
+          return;
+        }
+        setIsTranslating(false);
+      }
+      setSubtitleMode(mode);
+    },
+    [language, subtitleContent, translatedSourceContent, showToast]
+  );
+
+  const applyTemplate = useCallback((id) => {
+    if (id === "none") {
+      setSubtitlePreset("");
+      setFontName("Poppins");
+      setFontWeight("Regular");
+      setFontColor("#ffffff");
+      setFontSize(48);
+      setHighlightColor("#ffff00");
+      setOutline(2);
+      setOutlineEnabled(false);
+      setOutlineColor("#000000");
+      setShadow(1);
+      setShadowEnabled(false);
+      setBackgroundEnabled(false);
+      setPosition("bottom");
+      setAnimation("none");
+      return;
+    }
+
+    setSubtitlePreset(id);
+    const template = subtitleTemplates[id];
+    if (!template) return;
+
+    setFontName(template.fontName);
+    setFontWeight(template.fontWeight);
+    setFontColor(template.fontColor);
+    setFontSize(template.fontSize);
+    setHighlightColor(template.highlightColor);
+    setOutline(template.outline);
+    setOutlineEnabled(Boolean(template.outline));
+    setOutlineColor(template.outlineColor);
+    setShadow(template.shadow);
+    setShadowEnabled(Boolean(template.shadow));
+    setBackgroundEnabled(Boolean(template.background));
+    setPosition(template.position);
+    setAnimation(template.animation);
+  }, []);
+
   const [waveformPeaks, setWaveformPeaks] = useWaveform(previewVideoSrc);
 
   const projectState = {
@@ -196,6 +401,7 @@ function UploadSection() {
     timelineZoom,
     selectedSubtitleIndex,
     subtitlePreset,
+    videoId,
     videoPath,
     subtitlePath,
     editorStyles: {
@@ -225,6 +431,7 @@ function UploadSection() {
     setTimelineZoom,
     setSelectedSubtitleIndex,
     setSubtitlePreset,
+    setVideoId,
     setVideoPath,
     setSubtitlePath,
     setFontName,
@@ -352,11 +559,24 @@ function UploadSection() {
     try {
       const formData = new FormData();
       formData.append("video", file);
+      formData.append("language", language);
       const response = await api.post("/api/upload/video", formData);
-      setSubtitleContent(response.data.subtitleContent);
-      setSubtitlePath(response.data.subtitlePath);
-      setSubtitleWords(response.data.words || []);
+      setVideoId(response.data.videoId);
       setVideoPath(response.data.videoPath);
+
+      const result = await pollVideoStatus(response.data.videoId, {
+        isDone: (data) => data.status === "ready" || data.status === "failed",
+      });
+
+      if (result.status === "failed") {
+        showToast(`Transcription failed: ${result.errorMessage || "unknown error"}`, "error");
+        return;
+      }
+
+      setSubtitleContent(result.subtitleContent || "");
+      setSubtitlePath(result.subtitlePath);
+      setSubtitleWords(result.words || []);
+      setDenoisedAudioPath(result.denoisedAudioPath || "");
       setSelectedSubtitleIndex(0);
       setVideoSeek(0);
       setIsVideoPlaying(true);
@@ -368,7 +588,15 @@ function UploadSection() {
   const generateVideo = async () => {
     setIsGenerating(true);
     try {
+      const contentForRender =
+        subtitleMode === "romanized"
+          ? transliterate(subtitleContent)
+          : subtitleMode === "translated"
+            ? translatedSubtitleContent || subtitleContent
+            : subtitleContent;
+
       const response = await api.post("/api/upload/generate-video", {
+        videoId,
         subtitleMode,
         subtitlePreset,
         highlightMode,
@@ -386,16 +614,27 @@ function UploadSection() {
         backgroundEnabled,
         backColor: backgroundEnabled ? backColor : "#000000",
         outlineColor: outlineEnabled ? outlineColor : "#000000",
-        subtitleContent,
+        subtitleContent: contentForRender,
         subtitlePath,
         videoPath,
+        useEnhancedAudio,
       });
-      setGeneratedSrtPath(response.data.subtitlePath);
-      setFinalVideoPath(response.data.finalVideoPath);
+
+      const result = await pollVideoStatus(response.data.videoId, {
+        isDone: (data) => data.status === "done" || data.status === "failed",
+      });
+
+      if (result.status === "failed") {
+        showToast(`Video generation failed: ${result.errorMessage || "unknown error"}`, "error");
+        return;
+      }
+
+      setGeneratedSrtPath(result.subtitlePath);
+      setFinalVideoPath(result.finalVideoPath);
       setShowDownload(true);
-      alert("Video generated successfully.");
+      showToast("Video generated successfully — ready to download below.", "success");
     } catch {
-      alert("Video generation failed");
+      showToast("Video generation failed", "error");
     } finally {
       setIsGenerating(false);
     }
@@ -466,16 +705,7 @@ function UploadSection() {
   const subtitlePreviewStyle = {
     color: fontColor,
     fontFamily: fontName,
-    fontWeight:
-      fontWeight === "Regular"
-        ? 400
-        : fontWeight === "Medium"
-          ? 500
-          : fontWeight === "SemiBold"
-            ? 600
-            : fontWeight === "Bold"
-              ? 700
-              : 800,
+    fontWeight: FONT_WEIGHT_NUMBERS[fontWeight] || 400,
     fontSize: `${Math.min(Math.max(fontSize / 2.5, 16), 30)}px`,
     WebkitTextStroke: outlineEnabled ? `${Math.max(outline, 1)}px ${outlineColor}` : "0px transparent",
     WebkitTextFillColor: fontColor,
@@ -483,8 +713,14 @@ function UploadSection() {
     backgroundColor: backgroundEnabled ? `${backColor}F2` : "transparent",
     padding: "0.35rem 0.6rem",
     borderRadius: "0.5rem",
-    display: "inline-block",
-    boxDecorationBreak: "clone",
+    display: "inline-flex",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    alignItems: "baseline",
+    // Real layout gap (not a text-node space) so a scaled-up active/emphasized
+    // word — transform doesn't reflow siblings — has room to grow into
+    // without visually bleeding into its neighbors.
+    gap: "0.15em 0.55em",
     border: outlineEnabled ? `2px solid ${outlineColor}` : "1px solid transparent",
     boxShadow: "none",
   };
@@ -524,15 +760,32 @@ function UploadSection() {
                 <p className="section-kicker">Step 1</p>
                 <h2>Upload video</h2>
               </div>
-              <span className="status-pill">{file ? file.name : "No file selected"}</span>
             </div>
             <div className="upload-stack">
-              <Form.Control
-                className="file-input"
-                type="file"
-                accept="video/*"
-                onChange={(e) => setFile(e.target.files[0])}
-              />
+              <label className="dropzone">
+                <Form.Control
+                  className="dropzone__input"
+                  type="file"
+                  accept="video/*"
+                  onChange={(e) => setFile(e.target.files[0])}
+                />
+                <span className="dropzone__glyph">
+                  <UploadIcon size={17} />
+                </span>
+                <strong>{file ? file.name : "Drop a video, or click to browse"}</strong>
+                <span className="dropzone__hint">MP4, MOV — any length</span>
+              </label>
+              <div className="control-field">
+                <label>Spoken Language:</label>
+                <select
+                  className="control-select"
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value)}
+                >
+                  <option value="hi">Hindi</option>
+                  <option value="en">English</option>
+                </select>
+              </div>
               {isUploading ? (
                 <div className="inline-loader">
                   <Loader />
@@ -540,31 +793,41 @@ function UploadSection() {
                 </div>
               ) : (
                 <Button className="primary-action" onClick={uploadVideo} disabled={!file}>
-                  Upload
+                  <UploadIcon size={16} /> Upload
                 </Button>
               )}
             </div>
           </section>
 
-          <section className="panel-card panel-card--subtle">
-            <div className="upload-card__header">
-              <div>
-                <p className="section-kicker">Library</p>
-                <h2>History</h2>
+          {denoisedAudioUrl && (
+            <section className="panel-card">
+              <div className="upload-card__header">
+                <div>
+                  <p className="section-kicker">Step 1.5</p>
+                  <h2>Audio Enhancement</h2>
+                </div>
               </div>
-            </div>
-            <div className="panel-placeholder">History placeholder</div>
-          </section>
+              <div className="upload-stack">
+                <div className="control-field">
+                  <label>Before:</label>
+                  <audio controls src={previewVideoSrc} style={{ width: "100%" }} />
+                </div>
+                <div className="control-field">
+                  <label>After (denoised):</label>
+                  <audio controls src={denoisedAudioUrl} style={{ width: "100%" }} />
+                </div>
+                <label className="toggle-label">
+                  <input
+                    type="checkbox"
+                    checked={useEnhancedAudio}
+                    onChange={(e) => setUseEnhancedAudio(e.target.checked)}
+                  />
+                  Use enhanced audio in final video
+                </label>
+              </div>
+            </section>
+          )}
 
-          <section className="panel-card panel-card--subtle">
-            <div className="upload-card__header">
-              <div>
-                <p className="section-kicker">Library</p>
-                <h2>Assets</h2>
-              </div>
-            </div>
-            <div className="panel-placeholder">Assets placeholder</div>
-          </section>
         </aside>
 
         <section className="editor-panel editor-panel--center">
@@ -576,16 +839,16 @@ function UploadSection() {
               </div>
               <div className="preview-toolbar">
                 <button type="button" className="ghost-button" onClick={() => setIsVideoPlaying(true)}>
-                  Play
+                  <Play size={14} /> Play
                 </button>
                 <button type="button" className="ghost-button" onClick={() => setIsVideoPlaying(false)}>
-                  Pause
+                  <Pause size={14} /> Pause
                 </button>
                 <button type="button" className="ghost-button" onClick={openProject}>
-                  Open Project
+                  <FolderOpen size={14} /> Open Project
                 </button>
                 <button type="button" className="ghost-button" onClick={saveProject}>
-                  Save Project
+                  <Save size={14} /> Save Project
                 </button>
               </div>
             </div>
@@ -604,12 +867,30 @@ function UploadSection() {
                   onTimeUpdate={(event) => setVideoSeek(event.currentTarget.currentTime)}
                   onLoadedMetadata={(event) => setVideoDuration(event.currentTarget.duration || 0)}
                 />
-              ) : null}
+              ) : (
+                <div className="preview-placeholder-icon">
+                  <User size={72} strokeWidth={1.2} />
+                </div>
+              )}
               <div className="preview-overlay" />
               <div className="preview-badge">
-                {fontName} · {fontWeight}
+                <span className="preview-badge__dot" />
+                Preview
               </div>
-              <div className={previewCaptionClassName} style={subtitlePreviewStyle}>
+              {waveformPeaks.length > 0 && (
+                <div className="preview-mini-wave">
+                  {waveformPeaks
+                    .filter((_, index) => index % Math.ceil(waveformPeaks.length / 46) === 0)
+                    .slice(0, 46)
+                    .map((peak, index) => (
+                      <i key={index} style={{ height: `${Math.max(12, Math.min(100, peak * 100))}%` }} />
+                    ))}
+                </div>
+              )}
+              <div
+                className={previewCaptionClassName}
+                style={{ ...subtitlePreviewStyle, ...getRtlCaptionStyle(activeCueText) }}
+              >
                 <SubtitleOverlay
                   text={activeCueText}
                   words={activeCueWords}
@@ -688,7 +969,7 @@ function UploadSection() {
                     )
                   }
                 >
-                  Add Subtitle
+                  <Plus size={14} /> Add Subtitle
                 </button>
                 <button
                   className="ghost-button ghost-button--danger"
@@ -697,16 +978,16 @@ function UploadSection() {
                     setSubtitleContent((value) => value.split("\n\n").slice(0, -1).join("\n\n"))
                   }
                 >
-                  Delete Subtitle
+                  <Trash2 size={14} /> Delete Subtitle
                 </button>
                 <button className="ghost-button" type="button" onClick={splitSelectedCue}>
-                  Split Cue
+                  <Scissors size={14} /> Split Cue
                 </button>
                 <button className="ghost-button" type="button" onClick={mergeSelectedCue}>
-                  Merge Cue
+                  <Combine size={14} /> Merge Cue
                 </button>
                 <button className="ghost-button" type="button" onClick={duplicateSelectedCue}>
-                  Duplicate Cue
+                  <Copy size={14} /> Duplicate Cue
                 </button>
               </div>
             </div>
@@ -721,16 +1002,48 @@ function UploadSection() {
                   <span className="subtitle-list-item__index">
                     {String(index + 1).padStart(2, "0")}
                   </span>
-                  <span className="subtitle-list-item__text">{line}</span>
+                  <span className="subtitle-list-item__text" style={getRtlTextStyle(line)}>
+                    {line}
+                  </span>
                 </button>
               ))}
             </div>
             <textarea
               className="subtitle-textarea subtitle-textarea--compact"
               rows="14"
-              value={subtitleContent}
-              onChange={(e) => setSubtitleContent(e.target.value)}
+              dir="auto"
+              value={displaySubtitleContent}
+              readOnly={subtitleMode === "romanized" || subtitleMode === "translated"}
+              onChange={(e) => {
+                if (subtitleMode === "romanized" || subtitleMode === "translated") return;
+                setSubtitleContent(e.target.value);
+              }}
             />
+            {(subtitleMode === "romanized" || subtitleMode === "translated") && (
+              <p className="hero-copy" style={{ marginTop: "0.35rem", fontSize: "0.8rem" }}>
+                {subtitleMode === "translated" && isTranslating
+                  ? "Translating..."
+                  : "This preview is read-only. Switch to Original to edit text."}
+              </p>
+            )}
+
+            {subtitleMode === "original" && selectedCueEmphasisTokens.length > 0 && (
+              <div className="emphasis-row">
+                <span className="emphasis-row__label">
+                  Emphasize words in this cue (bigger + highlight color):
+                </span>
+                {selectedCueEmphasisTokens.map((token, index) => (
+                  <button
+                    key={`${token.word}-${index}`}
+                    type="button"
+                    className={`emphasis-token ${token.emphasized ? "emphasis-token--active" : ""}`}
+                    onClick={() => toggleEmphasisOnWord(index)}
+                  >
+                    {token.word}
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div className="settings-block settings-block--caption-mode">
               <p className="settings-block__title">Caption Mode</p>
@@ -738,21 +1051,29 @@ function UploadSection() {
                 <button
                   type="button"
                   className={`tab-button ${subtitleMode === "original" ? "tab-button--active" : ""}`}
-                  onClick={() => setSubtitleMode("original")}
+                  onClick={() => handleSubtitleModeChange("original")}
                 >
                   Original
                 </button>
                 <button
                   type="button"
                   className={`tab-button ${subtitleMode === "romanized" ? "tab-button--active" : ""}`}
-                  onClick={() => setSubtitleMode("romanized")}
+                  onClick={() => handleSubtitleModeChange("romanized")}
                 >
                   Hinglish
                 </button>
                 <button
                   type="button"
+                  className={`tab-button ${subtitleMode === "translated" ? "tab-button--active" : ""}`}
+                  onClick={() => handleSubtitleModeChange("translated")}
+                  disabled={isTranslating}
+                >
+                  {isTranslating ? "Translating..." : "Translate to English"}
+                </button>
+                <button
+                  type="button"
                   className={`tab-button ${subtitleMode === "karaoke" ? "tab-button--active" : ""}`}
-                  onClick={() => setSubtitleMode("karaoke")}
+                  onClick={() => handleSubtitleModeChange("karaoke")}
                 >
                   Word Highlight
                 </button>
@@ -761,157 +1082,133 @@ function UploadSection() {
 
             <div className="tab-bar">
               {[
-                "text",
-                "karaoke",
-                "style",
-                "animation",
-                "templates",
-              ].map((tab) => (
+                ["text", "Text"],
+                ["animation", "Transitions"],
+                ["templates", "Templates"],
+              ].map(([tab, label]) => (
                 <button
                   key={tab}
                   type="button"
                   className={`tab-button ${activeTab === tab ? "tab-button--active" : ""}`}
                   onClick={() => setActiveTab(tab)}
                 >
-                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  {label}
                 </button>
               ))}
             </div>
 
             <div className="tab-panel">
               {activeTab === "text" && (
-                <div className="settings-grid settings-grid--single">
-                  <div className="control-field">
-                    <label>Font Name:</label>
-                    <select className="control-select" value={fontName} onChange={(e) => setFontName(e.target.value)}>
-                      {fonts.map((font) => (
-                        <option key={font} value={font}>
-                          {font}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="control-field">
-                    <label>Font Weight:</label>
-                    <select className="control-select" value={fontWeight} onChange={(e) => setFontWeight(e.target.value)}>
-                      <option value="Regular">Regular</option>
-                      <option value="Medium">Medium</option>
-                      <option value="SemiBold">Semi Bold</option>
-                      <option value="Bold">Bold</option>
-                      <option value="ExtraBold">Extra Bold</option>
-                    </select>
-                  </div>
-                  <div className="control-field">
-                    <label>Font Color:</label>
-                    <input className="color-input" type="color" value={fontColor} onChange={(e) => setFontColor(e.target.value)} />
-                  </div>
-                  <div className="control-field">
-                    <label>Font Size:</label>
-                    <input className="number-input" type="number" value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))} />
-                  </div>
-                  <div className="control-field">
-                    <label>Position:</label>
-                    <select className="control-select" value={position} onChange={(e) => setPosition(e.target.value)}>
-                      <option value="bottom">Bottom</option>
-                      <option value="center">Center</option>
-                      <option value="top">Top</option>
-                    </select>
-                  </div>
-                </div>
-              )}
-              {activeTab === "karaoke" && (
-                <div className="settings-grid settings-grid--single">
-                  <div className="control-field">
-                    <label>Karaoke Preset:</label>
-                    <select className="control-select" value={subtitlePreset} onChange={(e) => setSubtitlePreset(e.target.value)}>
-                      <option value="">Custom</option>
-                      <option value="instagram-reel">Instagram Reel</option>
-                      <option value="youtube-shorts">YouTube Shorts</option>
-                      <option value="netflix">Netflix</option>
-                      <option value="news">News</option>
-                      <option value="gaming">Gaming</option>
-                      <option value="podcast">Podcast</option>
-                    </select>
-                  </div>
-                  <div className="control-field">
-                    <label>Highlight Mode:</label>
-                    <select className="control-select" value={highlightMode} onChange={(e) => setHighlightMode(e.target.value)}>
-                      <option value="current">Current Word</option>
-                      <option value="progressive">Progressive</option>
-                    </select>
-                  </div>
-                  <div className="control-field">
-                    <label>Highlight Color:</label>
-                    <input className="color-input" type="color" value={highlightColor} onChange={(e) => setHighlightColor(e.target.value)} />
-                  </div>
-                </div>
-              )}
-              {activeTab === "style" && (
-                <div className="settings-grid settings-grid--single">
-                  <div className="control-field">
-                    <label className="toggle-label">
-                      <input type="checkbox" checked={outlineEnabled} onChange={(e) => setOutlineEnabled(e.target.checked)} />
-                      Outline
-                    </label>
-                    <input className="number-input" type="number" min="0" max="10" value={outline} disabled={!outlineEnabled} onChange={(e) => setOutline(Number(e.target.value))} />
-                  </div>
-                  <div className="control-field">
-                    <label>Outline Color:</label>
-                    <input className="color-input" type="color" value={outlineColor} onChange={(e) => setOutlineColor(e.target.value)} />
-                  </div>
-                  <div className="control-field">
-                    <label className="toggle-label">
-                      <input type="checkbox" checked={shadowEnabled} onChange={(e) => setShadowEnabled(e.target.checked)} />
-                      Shadow
-                    </label>
-                    <input className="number-input" type="number" min="0" max="10" value={shadow} disabled={!shadowEnabled} onChange={(e) => setShadow(Number(e.target.value))} />
-                  </div>
-                  <div className="control-field">
-                    <label className="toggle-label">
-                      <input type="checkbox" checked={backgroundEnabled} onChange={(e) => setBackgroundEnabled(e.target.checked)} />
-                      Background Box
-                    </label>
-                    <input className="color-input" type="color" value={backColor} disabled={!backgroundEnabled} onChange={(e) => setBackColor(e.target.value)} />
-                  </div>
+                <div className="inspector-accordion">
+                  <AccordionSection title="Fonts" defaultOpen>
+                    <div className="control-field">
+                      <label>Font Name:</label>
+                      <select className="control-select" value={fontName} onChange={(e) => setFontName(e.target.value)}>
+                        {fonts.map((font) => (
+                          <option key={font.family} value={font.family}>
+                            {font.family}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="control-field">
+                      <label>Font Weight:</label>
+                      <select className="control-select" value={fontWeight} onChange={(e) => setFontWeight(e.target.value)}>
+                        {availableWeights.map((weight) => (
+                          <option key={weight} value={weight}>
+                            {weight.replace(/([a-z])([A-Z])/g, "$1 $2")}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="control-field">
+                      <label>Font Size:</label>
+                      <input className="number-input" type="number" value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))} />
+                    </div>
+                  </AccordionSection>
+
+                  <AccordionSection title="Position">
+                    <div className="control-field">
+                      <label>Position:</label>
+                      <select className="control-select" value={position} onChange={(e) => setPosition(e.target.value)}>
+                        <option value="bottom">Bottom</option>
+                        <option value="center">Center</option>
+                        <option value="top">Top</option>
+                      </select>
+                    </div>
+                  </AccordionSection>
+
+                  <AccordionSection title="Color">
+                    <div className="control-field">
+                      <label>Font Color:</label>
+                      <input className="color-input" type="color" value={fontColor} onChange={(e) => setFontColor(e.target.value)} />
+                      <ColorSwatchRow value={fontColor} onChange={setFontColor} />
+                    </div>
+                    <div className="control-field">
+                      <label>Highlight Mode:</label>
+                      <select className="control-select" value={highlightMode} onChange={(e) => setHighlightMode(e.target.value)}>
+                        <option value="current">Current Word</option>
+                        <option value="progressive">Progressive</option>
+                      </select>
+                    </div>
+                    <div className="control-field">
+                      <label>Highlight Color:</label>
+                      <input className="color-input" type="color" value={highlightColor} onChange={(e) => setHighlightColor(e.target.value)} />
+                      <ColorSwatchRow value={highlightColor} onChange={setHighlightColor} />
+                    </div>
+                  </AccordionSection>
+
+                  <AccordionSection title="Effects">
+                    <div className="control-field">
+                      <label className="toggle-label">
+                        <input type="checkbox" checked={outlineEnabled} onChange={(e) => setOutlineEnabled(e.target.checked)} />
+                        Outline
+                      </label>
+                      <input className="number-input" type="number" min="0" max="10" value={outline} disabled={!outlineEnabled} onChange={(e) => setOutline(Number(e.target.value))} />
+                    </div>
+                    <div className="control-field">
+                      <label>Outline Color:</label>
+                      <input className="color-input" type="color" value={outlineColor} onChange={(e) => setOutlineColor(e.target.value)} />
+                      <ColorSwatchRow value={outlineColor} onChange={setOutlineColor} disabled={!outlineEnabled} />
+                    </div>
+                    <div className="control-field">
+                      <label className="toggle-label">
+                        <input type="checkbox" checked={shadowEnabled} onChange={(e) => setShadowEnabled(e.target.checked)} />
+                        Shadow
+                      </label>
+                      <input className="number-input" type="number" min="0" max="10" value={shadow} disabled={!shadowEnabled} onChange={(e) => setShadow(Number(e.target.value))} />
+                    </div>
+                    <div className="control-field">
+                      <label className="toggle-label">
+                        <input type="checkbox" checked={backgroundEnabled} onChange={(e) => setBackgroundEnabled(e.target.checked)} />
+                        Background Box
+                      </label>
+                      <input className="color-input" type="color" value={backColor} disabled={!backgroundEnabled} onChange={(e) => setBackColor(e.target.value)} />
+                      <ColorSwatchRow value={backColor} onChange={setBackColor} disabled={!backgroundEnabled} />
+                    </div>
+                  </AccordionSection>
                 </div>
               )}
               {activeTab === "animation" && (
                 <div className="templates-grid">
-                  {["none", "pop", "fade", "zoom", "slide"].map((item) => (
+                  {ANIMATION_PRESETS.map(({ id, label, Icon }) => (
                     <button
-                      key={item}
+                      key={id}
                       type="button"
-                      className={`template-card ${animation === item ? "template-card--active" : ""}`}
-                      onClick={() => setAnimation(item)}
+                      className={`template-card template-card--icon ${animation === id ? "template-card--active" : ""}`}
+                      onClick={() => setAnimation(id)}
                     >
-                      <strong>{item.charAt(0).toUpperCase() + item.slice(1)}</strong>
-                      <span>Animation preset</span>
+                      <Icon size={22} />
+                      <strong>{label}</strong>
                     </button>
                   ))}
                 </div>
               )}
               {activeTab === "templates" && (
-                <div className="templates-grid">
-                  {[
-                    ["instagram-reel", "Instagram Reel"],
-                    ["youtube-shorts", "YouTube Shorts"],
-                    ["netflix", "Netflix"],
-                    ["news", "News"],
-                    ["gaming", "Gaming"],
-                    ["podcast", "Podcast"],
-                    ["", "Custom"],
-                  ].map(([id, name]) => (
-                    <button
-                      key={id || name}
-                      type="button"
-                      className={`template-card ${subtitlePreset === id ? "template-card--active" : ""}`}
-                      onClick={() => setSubtitlePreset(id)}
-                    >
-                      <strong>{name}</strong>
-                      <span>{id || "Manual control"}</span>
-                    </button>
-                  ))}
-                </div>
+                <TemplateGallery
+                  selectedTemplateId={subtitlePreset || "none"}
+                  onSelectTemplate={applyTemplate}
+                />
               )}
             </div>
 
@@ -923,7 +1220,7 @@ function UploadSection() {
                 </div>
               ) : (
                 <button className="generate-action" onClick={generateVideo}>
-                  Generate Video
+                  <Wand2 size={16} /> Generate Video
                 </button>
               )}
             </div>
@@ -932,6 +1229,12 @@ function UploadSection() {
       </section>
 
       {successMessage && <div className="success-message">{successMessage}</div>}
+      {toast && (
+        <div className={`toast-notification ${toast.tone === "error" ? "toast-notification--error" : ""}`}>
+          {toast.tone === "error" ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
+          <span>{toast.message}</span>
+        </div>
+      )}
       {showDownload && (
         <div className="download-bar">
           <div className="download-copy">
@@ -946,7 +1249,7 @@ function UploadSection() {
               )
             }
           >
-            Download SRT
+            <FileText size={16} /> Download SRT
           </Button>
           {finalVideoPath && (
             <Button
@@ -957,7 +1260,7 @@ function UploadSection() {
                 )
               }
             >
-              Download Video
+              <Download size={16} /> Download Video
             </Button>
           )}
         </div>

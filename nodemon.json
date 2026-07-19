@@ -1,8 +1,11 @@
 {
   "watch": [
     "server.js",
+    "src/worker.js",
     "src/routes",
-    "src/services"
+    "src/services",
+    "src/db",
+    "src/queue"
   ],
   "ignore": [
     "src/uploads/**",

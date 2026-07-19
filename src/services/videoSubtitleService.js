@@ -2,6 +2,7 @@ const { exec } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const ffmpegPath = require("ffmpeg-static");
 
 const buildFontsDirectory = (fontFilePath) => {
   if (!fontFilePath || !fs.existsSync(fontFilePath)) {
@@ -19,7 +20,7 @@ const buildFontsDirectory = (fontFilePath) => {
 
 const burnSubtitles = (videoPath, assPath, options = {}) => {
   return new Promise((resolve, reject) => {
-    const { fontFile } = options;
+    const { fontFile, audioPath } = options;
 
     const outputPath = path.join(
       "src/videos",
@@ -37,8 +38,9 @@ const burnSubtitles = (videoPath, assPath, options = {}) => {
       .replace(/\\/g, "/")
       .replace(":", "\\:");
 
-    const command =
-          `ffmpeg -i "${videoPath}" -vf "ass='${assFile}':fontsdir='${normalizedFontsDir}'" "${outputPath}" -y`;
+    const command = audioPath
+      ? `"${ffmpegPath}" -i "${videoPath}" -i "${audioPath}" -map 0:v -map 1:a -vf "ass='${assFile}':fontsdir='${normalizedFontsDir}'" -c:a aac "${outputPath}" -y`
+      : `"${ffmpegPath}" -i "${videoPath}" -vf "ass='${assFile}':fontsdir='${normalizedFontsDir}'" "${outputPath}" -y`;
 
     console.log("Fonts Directory:", fontsDir);
     console.log("ASS File:", assPath);

@@ -15,7 +15,8 @@
     "react": "^19.2.6",
     "react-bootstrap": "^2.10.10",
     "react-dom": "^19.2.6",
-    "styled-components": "^6.4.2"
+    "styled-components": "^6.4.2",
+    "transliteration": "^2.6.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

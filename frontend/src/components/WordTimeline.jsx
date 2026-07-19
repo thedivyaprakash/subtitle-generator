@@ -193,7 +193,7 @@ function WordTimeline({
               }}
               onClick={() => onSeek?.(start)}
             >
-              <span className="word-timeline__label">{label}</span>
+              <span className="word-timeline__label" dir="auto">{label}</span>
             </button>
           );
         })}

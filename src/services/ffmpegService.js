@@ -1,5 +1,6 @@
 const { exec } = require("child_process");
 const path = require("path");
+const ffmpegPath = require("ffmpeg-static");
 
 const extractAudio = (videoPath) => {
   return new Promise((resolve, reject) => {
@@ -13,7 +14,7 @@ const extractAudio = (videoPath) => {
     );
 
     const command =
-      `ffmpeg -i "${videoPath}" -vn -acodec pcm_s16le -ar 16000 -ac 1 "${audioPath}" -y`;
+      `"${ffmpegPath}" -i "${videoPath}" -vn -acodec pcm_s16le -ar 16000 -ac 1 "${audioPath}" -y`;
 
     exec(command, (error, stdout, stderr) => {
 
