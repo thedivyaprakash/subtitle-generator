@@ -54,7 +54,10 @@ export default function useProject(state, setters) {
     setters.setShadow(Number(editorStyles.shadow) || 1);
     setters.setShadowEnabled(Boolean(editorStyles.shadowEnabled));
     setters.setBackColor(editorStyles.backColor || "#000000");
-    setters.setBackgroundEnabled(Boolean(editorStyles.backgroundEnabled));
+    setters.setBackgroundStyle(
+      editorStyles.backgroundStyle || (editorStyles.backgroundEnabled ? "line" : "none")
+    );
+    setters.setUppercase(Boolean(editorStyles.uppercase));
     setters.setPosition(editorStyles.position || "bottom");
     setters.setHighlightColor(editorStyles.highlightColor || "#ffff00");
     setters.setHighlightMode(editorStyles.highlightMode || "current");

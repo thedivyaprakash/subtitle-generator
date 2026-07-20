@@ -10,6 +10,8 @@ function SubtitleOverlay({
   highlightColor = "#ffff00",
   highlightMode = "current",
   animation = "none",
+  backgroundStyle = "none",
+  backColor = "#000000",
 })
 {
   const fallbackWords = useMemo(() => parseEmphasis(text), [text]);
@@ -44,6 +46,7 @@ function SubtitleOverlay({
             : false
           : Boolean(word.emphasized);
         const isAnimated = karaokeMode && isActive && animation !== "none";
+        const isBoxed = !karaokeMode && backgroundStyle === "word";
 
         return (
           <span
@@ -53,10 +56,14 @@ function SubtitleOverlay({
               isActive ? "preview-word--active" : "",
               !karaokeMode && isActive ? "preview-word--emphasized" : "",
               isAnimated ? `preview-word--animation-${animation}` : "",
+              isBoxed ? "preview-word--boxed" : "",
             ]
               .filter(Boolean)
               .join(" ")}
-            style={{ color: isActive ? highlightColor : fontColor }}
+            style={{
+              color: isBoxed ? fontColor : isActive ? highlightColor : fontColor,
+              backgroundColor: isBoxed ? (isActive ? highlightColor : backColor) : undefined,
+            }}
           >
             {displayWord}
           </span>

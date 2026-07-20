@@ -113,7 +113,10 @@ function UploadSection() {
   const [shadow, setShadow] = useState(1);
   const [shadowEnabled, setShadowEnabled] = useState(false);
   const [backColor, setBackColor] = useState("#000000");
-  const [backgroundEnabled, setBackgroundEnabled] = useState(false);
+  // "none" | "line" (box behind the whole caption line) | "word" (a
+  // separate colored box behind each word, Hormozi/Reels style).
+  const [backgroundStyle, setBackgroundStyle] = useState("none");
+  const [uppercase, setUppercase] = useState(false);
   const [outlineColor, setOutlineColor] = useState("#000000");
   const [position, setPosition] = useState("bottom");
   const [showDownload, setShowDownload] = useState(false);
@@ -366,7 +369,8 @@ function UploadSection() {
       setOutlineColor("#000000");
       setShadow(1);
       setShadowEnabled(false);
-      setBackgroundEnabled(false);
+      setBackgroundStyle("none");
+      setUppercase(false);
       setPosition("bottom");
       setAnimation("none");
       return;
@@ -386,7 +390,9 @@ function UploadSection() {
     setOutlineColor(template.outlineColor);
     setShadow(template.shadow);
     setShadowEnabled(Boolean(template.shadow));
-    setBackgroundEnabled(Boolean(template.background));
+    setBackgroundStyle(template.backgroundStyle || "none");
+    setBackColor(template.backColor || "#000000");
+    setUppercase(Boolean(template.uppercase));
     setPosition(template.position);
     setAnimation(template.animation);
   }, []);
@@ -415,7 +421,8 @@ function UploadSection() {
       shadow,
       shadowEnabled,
       backColor,
-      backgroundEnabled,
+      backgroundStyle,
+      uppercase,
       position,
       highlightColor,
       highlightMode,
@@ -444,7 +451,8 @@ function UploadSection() {
     setShadow,
     setShadowEnabled,
     setBackColor,
-    setBackgroundEnabled,
+    setBackgroundStyle,
+    setUppercase,
     setPosition,
     setHighlightColor,
     setHighlightMode,
@@ -474,7 +482,8 @@ function UploadSection() {
     shadow,
     shadowEnabled,
     backColor,
-    backgroundEnabled,
+    backgroundStyle,
+    uppercase,
     outlineColor,
     position,
   });
@@ -497,7 +506,8 @@ function UploadSection() {
     setShadow(snapshot.shadow ?? 1);
     setShadowEnabled(Boolean(snapshot.shadowEnabled));
     setBackColor(snapshot.backColor ?? '#000000');
-    setBackgroundEnabled(Boolean(snapshot.backgroundEnabled));
+    setBackgroundStyle(snapshot.backgroundStyle ?? 'none');
+    setUppercase(Boolean(snapshot.uppercase));
     setOutlineColor(snapshot.outlineColor ?? '#000000');
     setPosition(snapshot.position ?? 'bottom');
   };
@@ -522,7 +532,8 @@ function UploadSection() {
       shadow,
       shadowEnabled,
       backColor,
-      backgroundEnabled,
+      backgroundStyle,
+      uppercase,
       outlineColor,
       position,
     }),
@@ -543,7 +554,8 @@ function UploadSection() {
       shadow,
       shadowEnabled,
       backColor,
-      backgroundEnabled,
+      backgroundStyle,
+      uppercase,
       outlineColor,
       position,
     ]
@@ -611,8 +623,9 @@ function UploadSection() {
         outline: outlineEnabled ? outline : 0,
         shadowEnabled,
         shadow: shadowEnabled ? shadow : 0,
-        backgroundEnabled,
-        backColor: backgroundEnabled ? backColor : "#000000",
+        backgroundStyle,
+        uppercase,
+        backColor: backgroundStyle !== "none" ? backColor : "#000000",
         outlineColor: outlineEnabled ? outlineColor : "#000000",
         subtitleContent: contentForRender,
         subtitlePath,
@@ -710,7 +723,8 @@ function UploadSection() {
     WebkitTextStroke: outlineEnabled ? `${Math.max(outline, 1)}px ${outlineColor}` : "0px transparent",
     WebkitTextFillColor: fontColor,
     textShadow: shadowEnabled ? `${shadow}px ${shadow}px 0 rgba(0, 0, 0, 0.95)` : "0 2px 8px rgba(0, 0, 0, 0.9)",
-    backgroundColor: backgroundEnabled ? `${backColor}F2` : "transparent",
+    backgroundColor: backgroundStyle === "line" ? `${backColor}F2` : "transparent",
+    textTransform: uppercase ? "uppercase" : "none",
     padding: "0.35rem 0.6rem",
     borderRadius: "0.5rem",
     display: "inline-flex",
@@ -725,14 +739,20 @@ function UploadSection() {
     boxShadow: "none",
   };
 
+  // Matches the backend: whole-line animation only applies to the plain
+  // caption path (generateAss). Karaoke mode animates per active word
+  // instead (handled inside SubtitleOverlay), so applying it here too
+  // would double it up.
   const previewCaptionClassName = [
     "preview-caption",
     `preview-caption--${position}`,
-    `preview-caption--animation-${animation}`,
+    subtitleMode !== "karaoke" ? `preview-caption--animation-${animation}` : "",
     highlightMode === "progressive"
       ? "preview-caption--progressive"
       : "preview-caption--current",
-  ].join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <main className="subtitle-page subtitle-page--desktop">
@@ -888,6 +908,7 @@ function UploadSection() {
                 </div>
               )}
               <div
+                key={subtitleMode !== "karaoke" ? activeCue?.start ?? "empty" : "karaoke"}
                 className={previewCaptionClassName}
                 style={{ ...subtitlePreviewStyle, ...getRtlCaptionStyle(activeCueText) }}
               >
@@ -900,6 +921,8 @@ function UploadSection() {
                   highlightColor={highlightColor}
                   highlightMode={highlightMode}
                   animation={animation}
+                  backgroundStyle={backgroundStyle}
+                  backColor={backColor}
                 />
               </div>
             </div>
@@ -1125,6 +1148,12 @@ function UploadSection() {
                       <label>Font Size:</label>
                       <input className="number-input" type="number" value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))} />
                     </div>
+                    <div className="control-field">
+                      <label className="toggle-label">
+                        <input type="checkbox" checked={uppercase} onChange={(e) => setUppercase(e.target.checked)} />
+                        Uppercase
+                      </label>
+                    </div>
                   </AccordionSection>
 
                   <AccordionSection title="Position">
@@ -1179,12 +1208,24 @@ function UploadSection() {
                       <input className="number-input" type="number" min="0" max="10" value={shadow} disabled={!shadowEnabled} onChange={(e) => setShadow(Number(e.target.value))} />
                     </div>
                     <div className="control-field">
-                      <label className="toggle-label">
-                        <input type="checkbox" checked={backgroundEnabled} onChange={(e) => setBackgroundEnabled(e.target.checked)} />
-                        Background Box
-                      </label>
-                      <input className="color-input" type="color" value={backColor} disabled={!backgroundEnabled} onChange={(e) => setBackColor(e.target.value)} />
-                      <ColorSwatchRow value={backColor} onChange={setBackColor} disabled={!backgroundEnabled} />
+                      <label>Background Style:</label>
+                      <select
+                        className="control-select"
+                        value={backgroundStyle}
+                        onChange={(e) => setBackgroundStyle(e.target.value)}
+                      >
+                        <option value="none">None</option>
+                        <option value="line">Line Box</option>
+                        <option value="word">Word Boxes (trending)</option>
+                      </select>
+                      <input
+                        className="color-input"
+                        type="color"
+                        value={backColor}
+                        disabled={backgroundStyle === "none"}
+                        onChange={(e) => setBackColor(e.target.value)}
+                      />
+                      <ColorSwatchRow value={backColor} onChange={setBackColor} disabled={backgroundStyle === "none"} />
                     </div>
                   </AccordionSection>
                 </div>

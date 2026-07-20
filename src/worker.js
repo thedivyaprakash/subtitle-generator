@@ -101,6 +101,8 @@ const renderWorker = new Worker(
       backColor,
       outlineColor,
       backgroundEnabled,
+      backgroundStyle,
+      uppercase,
       previewModel,
       useEnhancedAudio,
     } = job.data;
@@ -133,12 +135,17 @@ const renderWorker = new Worker(
       const selectedShadowEnabled = shadowEnabled === true || shadowEnabled === "true";
       const selectedBackgroundEnabled =
         backgroundEnabled === true || backgroundEnabled === "true";
+      // "none" | "line" | "word" — falls back to the legacy boolean for
+      // any caller that hasn't been updated to send backgroundStyle yet.
+      const selectedBackgroundStyle =
+        backgroundStyle || (selectedBackgroundEnabled ? "line" : "none");
+      const selectedUppercase = uppercase === true || uppercase === "true";
       const selectedOutline = Number(outline) || 0;
       const selectedShadow = Number(shadow) || 0;
       const selectedOutlineColor =
         selectedOutlineEnabled && outlineColor ? outlineColor : "#000000";
       const selectedBackColor =
-        selectedBackgroundEnabled && backColor ? backColor : "#000000";
+        selectedBackgroundStyle !== "none" && backColor ? backColor : "#000000";
 
       const alignment =
         selectedPosition === "top" ? 8 : selectedPosition === "center" ? 5 : 2;
@@ -179,13 +186,20 @@ const renderWorker = new Worker(
           highlightColor: hexToAssColor(selectedKaraokeHighlightColor),
           outline: selectedOutline,
           shadow: selectedShadow,
-          backColor: selectedBackgroundEnabled
-            ? hexToAssBackColor(selectedBackColor)
-            : "&H80000000&",
+          // Word boxes are meant to read as solid Hormozi-style pills, so
+          // they use the opaque encoding; the whole-line backdrop keeps its
+          // existing semi-transparent look.
+          backColor:
+            selectedBackgroundStyle === "word"
+              ? hexToAssColor(selectedBackColor)
+              : selectedBackgroundStyle === "line"
+                ? hexToAssBackColor(selectedBackColor)
+                : "&H80000000&",
           outlineColor: selectedOutlineEnabled
             ? hexToAssColor(selectedOutlineColor)
             : "&H00000000&",
-          backgroundEnabled: selectedBackgroundEnabled,
+          backgroundStyle: selectedBackgroundStyle,
+          uppercase: selectedUppercase,
           alignment,
           animationMode: selectedKaraokeAnimationMode,
         });

@@ -1084,6 +1084,62 @@
   font-weight: 800;
 }
 
+.preview-word--boxed {
+  padding: 0.18em 0.5em;
+  border-radius: 0.3em;
+}
+
+.preview-word--boxed.preview-word--emphasized {
+  /* Word-box mode only swaps the box color for emphasis (matches the
+     burned ASS output), not size — keep the base scale, don't stack. */
+  transform: none;
+  font-weight: inherit;
+}
+
+/* Transition/animation previews — mirrors buildAnimationTag's shapes in
+   src/services/subtitleService.js so what you see here matches the burn. */
+@keyframes preview-anim-pop {
+  0% { opacity: 0.3; transform: scale(1.25); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes preview-anim-bounce {
+  0% { opacity: 0.3; transform: scale(0.55); }
+  55% { opacity: 1; transform: scale(1.18); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes preview-anim-fade {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+@keyframes preview-anim-zoom {
+  0% { opacity: 0.3; transform: scale(0.7); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes preview-anim-neon-glow {
+  0%, 100% { text-shadow: 0 0 8px currentColor, 0 0 16px currentColor; }
+  50% { text-shadow: 0 0 16px currentColor, 0 0 30px currentColor; }
+}
+
+.preview-word--animation-pop { animation: preview-anim-pop 220ms ease-out; }
+.preview-word--animation-bounce { animation: preview-anim-bounce 320ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+.preview-word--animation-fade { animation: preview-anim-fade 240ms ease-out; }
+.preview-word--animation-zoom { animation: preview-anim-zoom 220ms ease-out; }
+.preview-word--animation-slide { animation: preview-anim-fade 240ms ease-out; }
+.preview-word--animation-neon { animation: preview-anim-neon-glow 1400ms ease-in-out infinite; }
+
+/* Container-level (plain caption, whole line together) — opacity/scale
+   only, so it doesn't fight preview-caption--center's translateY(-50%). */
+.preview-caption--animation-pop { animation: preview-anim-pop 260ms ease-out; }
+.preview-caption--animation-bounce { animation: preview-anim-bounce 360ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+.preview-caption--animation-fade { animation: preview-anim-fade 280ms ease-out; }
+.preview-caption--animation-zoom { animation: preview-anim-zoom 260ms ease-out; }
+.preview-caption--animation-slide { animation: preview-anim-fade 280ms ease-out; }
+.preview-caption--animation-neon { animation: preview-anim-neon-glow 1400ms ease-in-out infinite; }
+
 .preview-caption--top {
   top: 24px;
 }
@@ -1758,6 +1814,12 @@
 .template-gallery-card__preview-word--emphasized {
   font-size: 19px;
   font-weight: 900;
+}
+
+.template-gallery-card__preview-word--boxed {
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 14px;
 }
 
 .template-gallery-card__body {

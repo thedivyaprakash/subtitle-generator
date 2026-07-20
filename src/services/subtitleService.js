@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { romanizeText,} = require("./romanizationService");
 const { resolveFont } = require("./fontService");
+const { layoutWordRows } = require("./textMeasureService");
 
 // ─── existing ──────────────────────────────────────────
 
@@ -463,7 +464,15 @@ const buildAssDocument = ({
   alignment,
   marginV,
   dialogueLines,
+  includeWordBoxStyle = false,
 }) => {
+  // Word-box captions (one Dialogue per word, positioned with \pos) use a
+  // dedicated style — BorderStyle=3 turns "Outline" into box padding around
+  // each word, scaled to the font size so bigger captions get bigger boxes.
+  const wordBoxStyleLine = includeWordBoxStyle
+    ? `\nStyle: WordBox,${resolvedFont.fontFamily},${fontSize},${primaryColor},${secondaryColor},${outlineColor},${backColor},${assBold},0,0,0,100,100,0,0,3,${Math.round(fontSize * 0.28)},0,4,10,10,${marginV},1`
+    : "";
+
   const header = `[Script Info]
 ScriptType: v4.00+
 WrapStyle: 0
@@ -473,7 +482,7 @@ PlayResY: 1080
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,${resolvedFont.fontFamily},${fontSize},${primaryColor},${secondaryColor},${outlineColor},${backColor},${assBold},0,0,0,100,100,0,0,${borderStyle},${outline},${shadow},${alignment},10,10,${marginV},1
+Style: Default,${resolvedFont.fontFamily},${fontSize},${primaryColor},${secondaryColor},${outlineColor},${backColor},${assBold},0,0,0,100,100,0,0,${borderStyle},${outline},${shadow},${alignment},10,10,${marginV},1${wordBoxStyleLine}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`;
@@ -503,6 +512,100 @@ const validateGeneratedAss = (assContent, expectedSegments = []) => {
   return assContent;
 };
 
+// Vertical anchor a caption (or word-box block) centers on, in the same
+// 1920x1080 coordinate space buildSlideTag already uses.
+const resolveVerticalAnchor = (alignment, marginV) =>
+  Number(alignment) === 8
+    ? 60 + Number(marginV || 80)
+    : Number(alignment) === 5
+      ? 540
+      : 1080 - Number(marginV || 80);
+
+// Emits one Dialogue per word, positioned via \pos using real measured
+// widths (textMeasureService) so each word gets its own solid-colored box
+// (the WordBox style added in buildAssDocument) — the Hormozi/Reels look
+// that a single-Style, single-Dialogue-per-line ASS document can't express,
+// since BorderStyle (the box mode) is a Style-level property, not something
+// an override tag can toggle mid-line.
+const buildWordBoxDialogues = (entries, {
+  fontFile,
+  fontSize,
+  alignment,
+  marginV,
+  primaryColor,
+  highlightColor,
+  backColor,
+  uppercase,
+  animationMode = "none",
+  maxWidth = 1600,
+}) => {
+  const restY = resolveVerticalAnchor(alignment, marginV);
+  const padding = Math.round(fontSize * 0.28);
+  const rowGap = Math.round(fontSize * 0.25);
+  const rowHeight = fontSize + padding * 2 + rowGap;
+  const wordGap = Math.round(fontSize * 0.35);
+  // "neon" needs \3c for its glow color, but \3c is already spoken for here
+  // (it's the per-word box fill) — the two genuinely can't coexist, so
+  // neon is skipped in word-box mode rather than silently corrupting box
+  // colors. Every other preset is a scale/fade/move, which composes fine.
+  const mode = String(animationMode || "none").toLowerCase();
+  const effectiveMode = mode === "neon" ? "none" : mode;
+
+  return entries
+    .map((e) => {
+      const lineText = e.text.split("\\N").join(" ");
+      const tokens = parseEmphasisMarkup(lineText).map((token) => ({
+        ...token,
+        word: uppercase ? token.word.toUpperCase() : token.word,
+      }));
+      if (!tokens.length) return "";
+
+      const lineDurationMs = Math.max(
+        1,
+        (srtTimeToSeconds(e.end) - srtTimeToSeconds(e.start)) * 1000
+      );
+      const rows = layoutWordRows(tokens, { fontFile, fontSize, maxWidth, wordGap });
+      const blockHeight = rows.length * rowHeight;
+      const firstRowY = restY - blockHeight / 2 + rowHeight / 2;
+
+      return rows
+        .map((row, rowIndex) => {
+          const rowY = Math.round(firstRowY + rowIndex * rowHeight);
+          let x = Math.round((1920 - row.rowWidth) / 2);
+
+          return row.words
+            .map((word) => {
+              const boxColor = word.emphasized ? highlightColor : backColor;
+              const wordX = Math.round(x);
+              x += word.width + wordGap;
+
+              // Every word pops in together (synced from the cue's own
+              // start) rather than each word timing its own — word-box mode
+              // has no per-word speech timing to key off, it's a static
+              // caption block, so a synchronized group entrance is the
+              // closest match to how the other presets read.
+              const positionTag =
+                effectiveMode === "slide"
+                  ? `\\move(${wordX},${rowY - 110},${wordX},${rowY})`
+                  : `\\pos(${wordX},${rowY})`;
+              const introTag =
+                effectiveMode !== "none" && effectiveMode !== "slide"
+                  ? buildAnimationTag(effectiveMode, 0, lineDurationMs)
+                  : "";
+
+              // BorderStyle=3's opaque box fill comes from OutlineColour
+              // (\3c), not BackColour (\4c) — confirmed empirically against
+              // libass, contrary to the ASS spec's naming.
+              return `Dialogue: 0,${srtTimeToAss(e.start)},${srtTimeToAss(e.end)},WordBox,,0,0,0,,${introTag}{${positionTag}\\an4\\1c${primaryColor}\\3c${boxColor}}${escapeAssText(word.word)}`;
+            })
+            .join("\n");
+        })
+        .join("\n");
+    })
+    .filter(Boolean)
+    .join("\n");
+};
+
 // Build ASS file string from SRT string + style options
 const generateAss = (srtContent, options = {}) => {
   const {
@@ -516,6 +619,11 @@ const generateAss = (srtContent, options = {}) => {
     shadow       = 1,
     alignment    = 2,             // 2 = bottom center
     backgroundEnabled = false,
+    // "none" | "line" (today's whole-line box) | "word" (per-word boxes).
+    // Falls back to backgroundEnabled for callers that haven't been
+    // updated to pass backgroundStyle explicitly.
+    backgroundStyle = backgroundEnabled ? "line" : "none",
+    uppercase = false,
     marginV      = 80,
     animationMode = "none",
     highlightColor = "&H0000FFFF&",
@@ -529,7 +637,8 @@ const generateAss = (srtContent, options = {}) => {
     ["SemiBold", "Bold", "ExtraBold"].includes(resolvedFont.weight)
       ? -1
       : 0;
-  const borderStyle = backgroundEnabled ? 3 : 1;
+  const borderStyle = backgroundStyle === "line" ? 3 : 1;
+  const applyCase = (word) => (uppercase ? word.toUpperCase() : word);
 
   // Renders manual "**word**" keyword emphasis (bigger + highlight color)
   // per word, reverting explicitly afterward rather than via \r so it
@@ -542,29 +651,42 @@ const generateAss = (srtContent, options = {}) => {
         parseEmphasisMarkup(line)
           .map(({ word, emphasized }) =>
             emphasized
-              ? `{\\fscx130\\fscy130\\1c${highlightColor}}${escapeAssText(word)}{\\fscx100\\fscy100\\1c${primaryColor}}`
-              : escapeAssText(word)
+              ? `{\\fscx130\\fscy130\\1c${highlightColor}}${escapeAssText(applyCase(word))}{\\fscx100\\fscy100\\1c${primaryColor}}`
+              : escapeAssText(applyCase(word))
           )
           .join(" ")
       )
       .join("\\N");
 
   const entries = parseSrt(srtContent);
-  const dialogues = entries
-    .map((e) => {
-      const lineDurationMs = Math.max(
-        1,
-        (srtTimeToSeconds(e.end) - srtTimeToSeconds(e.start)) * 1000
-      );
-      const animationTag = isLineLevelAnimation(animationMode)
-        ? animationMode.toLowerCase() === "slide"
-          ? buildSlideTag(alignment, marginV)
-          : buildAnimationTag("neon", 0, lineDurationMs, { glowColor: primaryColor })
-        : buildAnimationTag(animationMode, 0, lineDurationMs);
+  const dialogues =
+    backgroundStyle === "word"
+      ? buildWordBoxDialogues(entries, {
+          fontFile: resolvedFont.fontFile,
+          fontSize,
+          alignment,
+          marginV,
+          primaryColor,
+          highlightColor,
+          backColor,
+          uppercase,
+          animationMode,
+        })
+      : entries
+          .map((e) => {
+            const lineDurationMs = Math.max(
+              1,
+              (srtTimeToSeconds(e.end) - srtTimeToSeconds(e.start)) * 1000
+            );
+            const animationTag = isLineLevelAnimation(animationMode)
+              ? animationMode.toLowerCase() === "slide"
+                ? buildSlideTag(alignment, marginV)
+                : buildAnimationTag("neon", 0, lineDurationMs, { glowColor: primaryColor })
+              : buildAnimationTag(animationMode, 0, lineDurationMs);
 
-      return `Dialogue: 0,${srtTimeToAss(e.start)},${srtTimeToAss(e.end)},Default,,0,0,0,,${animationTag}${buildEmphasisAwareText(e.text)}`;
-    })
-    .join("\n");
+            return `Dialogue: 0,${srtTimeToAss(e.start)},${srtTimeToAss(e.end)},Default,,0,0,0,,${animationTag}${buildEmphasisAwareText(e.text)}`;
+          })
+          .join("\n");
   const assContent = buildAssDocument({
     resolvedFont,
     fontSize,
@@ -578,6 +700,7 @@ const generateAss = (srtContent, options = {}) => {
     alignment,
     marginV,
     dialogueLines: dialogues,
+    includeWordBoxStyle: backgroundStyle === "word",
   });
 
   return validateGeneratedAss(assContent, ["Dialogue:"]);
