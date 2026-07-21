@@ -47,6 +47,10 @@ function SubtitleOverlay({
           : Boolean(word.emphasized);
         const isAnimated = karaokeMode && isActive && animation !== "none";
         const isBoxed = !karaokeMode && backgroundStyle === "word";
+        // Per-word "**word:#hex**" color overrides the shared highlight
+        // color, karaoke's timed words have no such field so this is a
+        // no-op there.
+        const wordColor = (!karaokeMode && word.color) || highlightColor;
 
         return (
           <span
@@ -61,8 +65,15 @@ function SubtitleOverlay({
               .filter(Boolean)
               .join(" ")}
             style={{
-              color: isBoxed ? fontColor : isActive ? highlightColor : fontColor,
-              backgroundColor: isBoxed ? (isActive ? highlightColor : backColor) : undefined,
+              color: isBoxed ? fontColor : isActive ? wordColor : fontColor,
+              // The outer caption container sets -webkit-text-fill-color
+              // (needed for the stroke/outline effect) to the base font
+              // color, and that property inherits — without resetting it
+              // here, every word would render in that inherited color no
+              // matter what "color" says, silently hiding any highlight/
+              // emphasis/custom color in Chrome/Edge/WebView.
+              WebkitTextFillColor: "currentColor",
+              backgroundColor: isBoxed ? (isActive ? wordColor : backColor) : undefined,
             }}
           >
             {displayWord}

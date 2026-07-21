@@ -34,6 +34,7 @@ import SubtitleOverlay from "./SubtitleOverlay";
 import TimelineEditor from "./TimelineEditor";
 import TemplateGallery from "./TemplateGallery";
 import ColorSwatchRow from "./ColorSwatchRow";
+import ColorPickerPopover from "./ColorPickerPopover";
 import subtitleTemplates from "../data/subtitleTemplates";
 import useTimeline from "../hooks/useTimeline";
 import useUndoRedo from "../hooks/useUndoRedo";
@@ -43,7 +44,7 @@ import {
   buildSubtitleCueList,
 } from "../utils/subtitleUtils";
 import { getRtlTextStyle, getRtlCaptionStyle } from "../utils/textDirection";
-import { parseEmphasis, toggleWordEmphasis } from "../utils/emphasisUtils";
+import { parseEmphasis, toggleWordEmphasis, setWordColor } from "../utils/emphasisUtils";
 
 const FONT_WEIGHT_NUMBERS = {
   Thin: 100,
@@ -118,7 +119,11 @@ function UploadSection() {
   const [backgroundStyle, setBackgroundStyle] = useState("none");
   const [uppercase, setUppercase] = useState(false);
   const [outlineColor, setOutlineColor] = useState("#000000");
+  // "bottom" | "center" | "top" | "custom" (dragged on the preview).
   const [position, setPosition] = useState("bottom");
+  const [positionX, setPositionX] = useState(50);
+  const [positionY, setPositionY] = useState(85);
+  const [isDraggingCaption, setIsDraggingCaption] = useState(false);
   const [showDownload, setShowDownload] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [finalVideoPath, setFinalVideoPath] = useState("");
@@ -132,6 +137,7 @@ function UploadSection() {
   const [videoDuration, setVideoDuration] = useState(0);
   const [timelineZoom, setTimelineZoom] = useState(100);
   const videoRef = useRef(null);
+  const previewFrameRef = useRef(null);
 
   const previewVideoSrc = videoPath
     ? videoPath.startsWith("http")
@@ -333,6 +339,23 @@ function UploadSection() {
     [selectedSubtitleIndex, subtitleContent, updateSubtitleCues]
   );
 
+  const setEmphasisWordColor = useCallback(
+    (wordIndex, colorHex) => {
+      const cues = buildSubtitleCueList(subtitleContent);
+      const cue = cues[selectedSubtitleIndex];
+      if (!cue) return;
+
+      const nextCues = cues.map((item, index) =>
+        index === selectedSubtitleIndex
+          ? { ...item, text: setWordColor(item.text, wordIndex, colorHex) }
+          : item
+      );
+
+      updateSubtitleCues(nextCues, selectedSubtitleIndex);
+    },
+    [selectedSubtitleIndex, subtitleContent, updateSubtitleCues]
+  );
+
   const handleSubtitleModeChange = useCallback(
     async (mode) => {
       if (mode === "translated" && translatedSourceContent !== subtitleContent) {
@@ -372,6 +395,8 @@ function UploadSection() {
       setBackgroundStyle("none");
       setUppercase(false);
       setPosition("bottom");
+      setPositionX(50);
+      setPositionY(85);
       setAnimation("none");
       return;
     }
@@ -393,6 +418,8 @@ function UploadSection() {
     setBackgroundStyle(template.backgroundStyle || "none");
     setBackColor(template.backColor || "#000000");
     setUppercase(Boolean(template.uppercase));
+    // Templates set a preset (bottom/center/top); a prior manual drag isn't
+    // part of a template's identity, so applying one falls back to its preset.
     setPosition(template.position);
     setAnimation(template.animation);
   }, []);
@@ -424,6 +451,8 @@ function UploadSection() {
       backgroundStyle,
       uppercase,
       position,
+      positionX,
+      positionY,
       highlightColor,
       highlightMode,
       animation,
@@ -454,6 +483,8 @@ function UploadSection() {
     setBackgroundStyle,
     setUppercase,
     setPosition,
+    setPositionX,
+    setPositionY,
     setHighlightColor,
     setHighlightMode,
     setAnimation,
@@ -486,6 +517,8 @@ function UploadSection() {
     uppercase,
     outlineColor,
     position,
+    positionX,
+    positionY,
   });
 
   const applyEditorSnapshot = (snapshot) => {
@@ -510,6 +543,8 @@ function UploadSection() {
     setUppercase(Boolean(snapshot.uppercase));
     setOutlineColor(snapshot.outlineColor ?? '#000000');
     setPosition(snapshot.position ?? 'bottom');
+    setPositionX(snapshot.positionX ?? 50);
+    setPositionY(snapshot.positionY ?? 85);
   };
 
   const { undo, redo, sync } = useUndoRedo(buildEditorSnapshot, applyEditorSnapshot);
@@ -536,6 +571,8 @@ function UploadSection() {
       uppercase,
       outlineColor,
       position,
+      positionX,
+      positionY,
     }),
     [
       subtitleContent,
@@ -558,6 +595,8 @@ function UploadSection() {
       uppercase,
       outlineColor,
       position,
+      positionX,
+      positionY,
     ]
   );
 
@@ -618,6 +657,8 @@ function UploadSection() {
         fontColor,
         fontSize,
         position,
+        positionX,
+        positionY,
         fontWeight,
         outlineEnabled,
         outline: outlineEnabled ? outline : 0,
@@ -715,6 +756,42 @@ function UploadSection() {
     return () => window.removeEventListener("keydown", handleEditorActions);
   }, [deleteSelectedCue, duplicateSelectedCue]);
 
+  // Drag-anywhere caption placement: dragging always switches Position to
+  // "custom" and records where it landed as a percentage of the preview
+  // frame, so the same coordinates translate directly onto the 1920x1080
+  // canvas the backend burns into.
+  const updateDragPosition = useCallback((clientX, clientY) => {
+    const frame = previewFrameRef.current;
+    if (!frame) return;
+    const rect = frame.getBoundingClientRect();
+    const x = Math.min(100, Math.max(0, ((clientX - rect.left) / rect.width) * 100));
+    const y = Math.min(100, Math.max(0, ((clientY - rect.top) / rect.height) * 100));
+    setPositionX(x);
+    setPositionY(y);
+    setPosition("custom");
+  }, []);
+
+  const handleCaptionPointerDown = useCallback(
+    (event) => {
+      event.preventDefault();
+      setIsDraggingCaption(true);
+      updateDragPosition(event.clientX, event.clientY);
+    },
+    [updateDragPosition]
+  );
+
+  useEffect(() => {
+    if (!isDraggingCaption) return undefined;
+    const handleMove = (event) => updateDragPosition(event.clientX, event.clientY);
+    const handleUp = () => setIsDraggingCaption(false);
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+  }, [isDraggingCaption, updateDragPosition]);
+
   const subtitlePreviewStyle = {
     color: fontColor,
     fontFamily: fontName,
@@ -753,6 +830,17 @@ function UploadSection() {
   ]
     .filter(Boolean)
     .join(" ");
+
+  const customPositionStyle =
+    position === "custom"
+      ? {
+          left: `${positionX}%`,
+          top: `${positionY}%`,
+          right: "auto",
+          bottom: "auto",
+          transform: "translate(-50%, -50%)",
+        }
+      : {};
 
   return (
     <main className="subtitle-page subtitle-page--desktop">
@@ -872,7 +960,7 @@ function UploadSection() {
                 </button>
               </div>
             </div>
-            <div className="preview-frame preview-frame--large preview-frame--editor">
+            <div ref={previewFrameRef} className="preview-frame preview-frame--large preview-frame--editor">
               {videoPath ? (
                 <video
                   ref={videoRef}
@@ -909,8 +997,14 @@ function UploadSection() {
               )}
               <div
                 key={subtitleMode !== "karaoke" ? activeCue?.start ?? "empty" : "karaoke"}
-                className={previewCaptionClassName}
-                style={{ ...subtitlePreviewStyle, ...getRtlCaptionStyle(activeCueText) }}
+                className={`${previewCaptionClassName}${isDraggingCaption ? " preview-caption--dragging" : ""}`}
+                style={{
+                  ...subtitlePreviewStyle,
+                  ...getRtlCaptionStyle(activeCueText),
+                  ...customPositionStyle,
+                }}
+                onPointerDown={handleCaptionPointerDown}
+                title="Drag to place the caption anywhere"
               >
                 <SubtitleOverlay
                   text={activeCueText}
@@ -1053,17 +1147,25 @@ function UploadSection() {
             {subtitleMode === "original" && selectedCueEmphasisTokens.length > 0 && (
               <div className="emphasis-row">
                 <span className="emphasis-row__label">
-                  Emphasize words in this cue (bigger + highlight color):
+                  Emphasize words in this cue (click to toggle, pick a color per word):
                 </span>
                 {selectedCueEmphasisTokens.map((token, index) => (
-                  <button
-                    key={`${token.word}-${index}`}
-                    type="button"
-                    className={`emphasis-token ${token.emphasized ? "emphasis-token--active" : ""}`}
-                    onClick={() => toggleEmphasisOnWord(index)}
-                  >
-                    {token.word}
-                  </button>
+                  <span key={`${token.word}-${index}`} className="emphasis-token-group">
+                    <button
+                      type="button"
+                      className={`emphasis-token ${token.emphasized ? "emphasis-token--active" : ""}`}
+                      onClick={() => toggleEmphasisOnWord(index)}
+                    >
+                      {token.word}
+                    </button>
+                    {token.emphasized && (
+                      <ColorPickerPopover
+                        value={token.color || highlightColor}
+                        onChange={(hex) => setEmphasisWordColor(index, hex)}
+                        label={`color for "${token.word}"`}
+                      />
+                    )}
+                  </span>
                 ))}
               </div>
             )}
@@ -1163,14 +1265,18 @@ function UploadSection() {
                         <option value="bottom">Bottom</option>
                         <option value="center">Center</option>
                         <option value="top">Top</option>
+                        <option value="custom">Custom (dragged)</option>
                       </select>
                     </div>
+                    <p className="hero-copy" style={{ fontSize: "0.78rem" }}>
+                      Or drag the caption directly on the preview to place it anywhere.
+                    </p>
                   </AccordionSection>
 
                   <AccordionSection title="Color">
                     <div className="control-field">
                       <label>Font Color:</label>
-                      <input className="color-input" type="color" value={fontColor} onChange={(e) => setFontColor(e.target.value)} />
+                      <ColorPickerPopover value={fontColor} onChange={setFontColor} label="Font Color" />
                       <ColorSwatchRow value={fontColor} onChange={setFontColor} />
                     </div>
                     <div className="control-field">
@@ -1182,7 +1288,7 @@ function UploadSection() {
                     </div>
                     <div className="control-field">
                       <label>Highlight Color:</label>
-                      <input className="color-input" type="color" value={highlightColor} onChange={(e) => setHighlightColor(e.target.value)} />
+                      <ColorPickerPopover value={highlightColor} onChange={setHighlightColor} label="Highlight Color" />
                       <ColorSwatchRow value={highlightColor} onChange={setHighlightColor} />
                     </div>
                   </AccordionSection>
@@ -1197,7 +1303,7 @@ function UploadSection() {
                     </div>
                     <div className="control-field">
                       <label>Outline Color:</label>
-                      <input className="color-input" type="color" value={outlineColor} onChange={(e) => setOutlineColor(e.target.value)} />
+                      <ColorPickerPopover value={outlineColor} onChange={setOutlineColor} disabled={!outlineEnabled} label="Outline Color" />
                       <ColorSwatchRow value={outlineColor} onChange={setOutlineColor} disabled={!outlineEnabled} />
                     </div>
                     <div className="control-field">
@@ -1218,12 +1324,11 @@ function UploadSection() {
                         <option value="line">Line Box</option>
                         <option value="word">Word Boxes (trending)</option>
                       </select>
-                      <input
-                        className="color-input"
-                        type="color"
+                      <ColorPickerPopover
                         value={backColor}
+                        onChange={setBackColor}
                         disabled={backgroundStyle === "none"}
-                        onChange={(e) => setBackColor(e.target.value)}
+                        label="Background Color"
                       />
                       <ColorSwatchRow value={backColor} onChange={setBackColor} disabled={backgroundStyle === "none"} />
                     </div>

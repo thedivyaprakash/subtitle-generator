@@ -375,17 +375,18 @@ const srtTimeToSeconds = (srtTime) => {
 };
 
 // Mirrors frontend/src/utils/emphasisUtils.js's parseEmphasis — manual
-// keyword emphasis is authored inline as "**word**" markup in the cue
-// text itself, so both sides must tokenize it identically.
+// keyword emphasis is authored inline as "**word**" (or "**word:#hex**"
+// for a word-specific color) markup in the cue text itself, so both sides
+// must tokenize it identically.
 const parseEmphasisMarkup = (text = "") =>
   String(text)
     .split(/\s+/)
     .filter(Boolean)
     .map((token) => {
-      const match = token.match(/^\*\*(.+)\*\*$/);
+      const match = token.match(/^\*\*(.+?)(?::(#[0-9a-fA-F]{6}))?\*\*$/);
       return match
-        ? { word: match[1], emphasized: true }
-        : { word: token, emphasized: false };
+        ? { word: match[1], emphasized: true, color: match[2] || null }
+        : { word: token, emphasized: false, color: null };
     });
 
 const escapeAssText = (text) =>
@@ -393,6 +394,18 @@ const escapeAssText = (text) =>
     .replace(/\\/g, "\\\\")
     .replace(/{/g, "\\{")
     .replace(/}/g, "\\}");
+
+// Per-word colors arrive as raw "#rrggbb" straight out of "**word:#hex**"
+// markup in the cue text — everywhere else colors reach this file already
+// converted to ASS's "&H00bbggrr&" by the caller (worker.js), but this one
+// is parsed directly out of user content, so it needs its own conversion.
+const hexToAssColorLocal = (hex) => {
+  const clean = String(hex || "").replace("#", "");
+  const r = clean.substring(0, 2);
+  const g = clean.substring(2, 4);
+  const b = clean.substring(4, 6);
+  return `&H00${b}${g}${r}&`;
+};
 
 // Seconds (float) → ASS time "H:MM:SS.CC"
 const secondsToAssTime = (seconds) => {
@@ -435,15 +448,20 @@ const buildAnimationTag = (mode, startMs, durationMs, options = {}) => {
 // "slide" (and any future move-based effect) is always applied once per
 // Dialogue line, not per word — computed from the caption's alignment so
 // it actually slides toward wherever it rests, not a fixed screen spot.
-const buildSlideTag = (alignment, marginV) => {
-  const centerX = 960;
-  const restY =
-    Number(alignment) === 8
+const buildSlideTag = (alignment, marginV, customPosition = null) => {
+  const centerX = customPosition ? customPosition.x : 960;
+  const restY = customPosition
+    ? customPosition.y
+    : Number(alignment) === 8
       ? 60 + Number(marginV || 80)
       : Number(alignment) === 5
         ? 540
         : 1080 - Number(marginV || 80);
-  const startY = Number(alignment) === 8 ? restY - 110 : restY + 110;
+  const startY = customPosition
+    ? restY - 110
+    : Number(alignment) === 8
+      ? restY - 110
+      : restY + 110;
   return `{\\move(${centerX},${startY},${centerX},${restY})}`;
 };
 
@@ -537,9 +555,11 @@ const buildWordBoxDialogues = (entries, {
   backColor,
   uppercase,
   animationMode = "none",
+  customPosition = null,
   maxWidth = 1600,
 }) => {
-  const restY = resolveVerticalAnchor(alignment, marginV);
+  const restY = customPosition ? customPosition.y : resolveVerticalAnchor(alignment, marginV);
+  const centerX = customPosition ? customPosition.x : 1920 / 2;
   const padding = Math.round(fontSize * 0.28);
   const rowGap = Math.round(fontSize * 0.25);
   const rowHeight = fontSize + padding * 2 + rowGap;
@@ -571,11 +591,15 @@ const buildWordBoxDialogues = (entries, {
       return rows
         .map((row, rowIndex) => {
           const rowY = Math.round(firstRowY + rowIndex * rowHeight);
-          let x = Math.round((1920 - row.rowWidth) / 2);
+          let x = Math.round(centerX - row.rowWidth / 2);
 
           return row.words
             .map((word) => {
-              const boxColor = word.emphasized ? highlightColor : backColor;
+              const boxColor = word.emphasized
+                ? word.color
+                  ? hexToAssColorLocal(word.color)
+                  : highlightColor
+                : backColor;
               const wordX = Math.round(x);
               x += word.width + wordGap;
 
@@ -627,6 +651,9 @@ const generateAss = (srtContent, options = {}) => {
     marginV      = 80,
     animationMode = "none",
     highlightColor = "&H0000FFFF&",
+    // { x, y } in the 1920x1080 canvas, from dragging the caption in the
+    // live preview — overrides the alignment/marginV-driven default spot.
+    customPosition = null,
   } = options;
 
   const resolvedFont = resolveFont({
@@ -649,11 +676,11 @@ const generateAss = (srtContent, options = {}) => {
       .split("\\N")
       .map((line) =>
         parseEmphasisMarkup(line)
-          .map(({ word, emphasized }) =>
-            emphasized
-              ? `{\\fscx130\\fscy130\\1c${highlightColor}}${escapeAssText(applyCase(word))}{\\fscx100\\fscy100\\1c${primaryColor}}`
-              : escapeAssText(applyCase(word))
-          )
+          .map(({ word, emphasized, color }) => {
+            if (!emphasized) return escapeAssText(applyCase(word));
+            const wordColor = color ? hexToAssColorLocal(color) : highlightColor;
+            return `{\\fscx130\\fscy130\\1c${wordColor}}${escapeAssText(applyCase(word))}{\\fscx100\\fscy100\\1c${primaryColor}}`;
+          })
           .join(" ")
       )
       .join("\\N");
@@ -671,6 +698,7 @@ const generateAss = (srtContent, options = {}) => {
           backColor,
           uppercase,
           animationMode,
+          customPosition,
         })
       : entries
           .map((e) => {
@@ -678,13 +706,20 @@ const generateAss = (srtContent, options = {}) => {
               1,
               (srtTimeToSeconds(e.end) - srtTimeToSeconds(e.start)) * 1000
             );
+            const isSlide = animationMode.toLowerCase?.() === "slide";
             const animationTag = isLineLevelAnimation(animationMode)
-              ? animationMode.toLowerCase() === "slide"
-                ? buildSlideTag(alignment, marginV)
+              ? isSlide
+                ? buildSlideTag(alignment, marginV, customPosition)
                 : buildAnimationTag("neon", 0, lineDurationMs, { glowColor: primaryColor })
               : buildAnimationTag(animationMode, 0, lineDurationMs);
+            // Slide already positions via \move above; everything else
+            // needs an explicit \pos to land at the dragged spot instead of
+            // the Style's Alignment/MarginV default.
+            const positionTag = customPosition && !isSlide
+              ? `{\\an5\\pos(${customPosition.x},${customPosition.y})}`
+              : "";
 
-            return `Dialogue: 0,${srtTimeToAss(e.start)},${srtTimeToAss(e.end)},Default,,0,0,0,,${animationTag}${buildEmphasisAwareText(e.text)}`;
+            return `Dialogue: 0,${srtTimeToAss(e.start)},${srtTimeToAss(e.end)},Default,,0,0,0,,${positionTag}${animationTag}${buildEmphasisAwareText(e.text)}`;
           })
           .join("\n");
   const assContent = buildAssDocument({
@@ -733,6 +768,7 @@ const generateKaraokeAss = (words = [], options = {}) => {
     backgroundEnabled = false,
     marginV = 80,
     subtitlePath,
+    customPosition = null,
   } = options;
 
   const resolvedFont = resolveFont({
@@ -793,14 +829,20 @@ const generateKaraokeAss = (words = [], options = {}) => {
     }
 
     const lineLevel = isLineLevelAnimation(animationMode);
+    const isSlide = lineLevel && animationMode.toLowerCase() === "slide";
     const lineDurationMs = Math.max(
       1,
       (srtTimeToSeconds(cue.end) - srtTimeToSeconds(cue.start)) * 1000
     );
     const lineAnimationTag = lineLevel
-      ? animationMode.toLowerCase() === "slide"
-        ? buildSlideTag(alignment, marginV)
+      ? isSlide
+        ? buildSlideTag(alignment, marginV, customPosition)
         : buildAnimationTag("neon", 0, lineDurationMs, { glowColor: primaryColor })
+      : "";
+    // Slide already positions via \move; everything else needs an explicit
+    // \pos to land at the dragged spot instead of the Style's default.
+    const positionTag = customPosition && !isSlide
+      ? `{\\an5\\pos(${customPosition.x},${customPosition.y})}`
       : "";
 
     let cumulativeMs = 0;
@@ -818,7 +860,7 @@ const generateKaraokeAss = (words = [], options = {}) => {
         const perWordTag = lineLevel
           ? ""
           : buildAnimationTag(animationMode, wordStartMs, wordDurationMs);
-        const prefix = index === 0 ? lineAnimationTag + perWordTag : perWordTag;
+        const prefix = index === 0 ? positionTag + lineAnimationTag + perWordTag : perWordTag;
 
         // "progressive" uses ASS's native \kf sweep, which naturally keeps
         // already-spoken words highlighted. "current" instead only highlights
@@ -925,6 +967,12 @@ const generateAssFromPreview = (previewModel = {}) => {
   const alignment =
     style.position === "top" ? 8 : style.position === "center" ? 5 : 2;
   const marginV = 80;
+  const customPosition =
+    style.position === "custom" &&
+    Number.isFinite(Number(style.positionX)) &&
+    Number.isFinite(Number(style.positionY))
+      ? { x: (Number(style.positionX) / 100) * 1920, y: (Number(style.positionY) / 100) * 1080 }
+      : null;
 
   const animationMode = style.animation || "none";
 
@@ -932,11 +980,15 @@ const generateAssFromPreview = (previewModel = {}) => {
     const normalizedWords = cueWords.length ? cueWords : previewWords;
 
     const lineLevel = isLineLevelAnimation(animationMode);
+    const isSlide = lineLevel && animationMode.toLowerCase() === "slide";
     const lineDurationMs = Math.max(1, (Number(cue.end) - Number(cue.start)) * 1000);
     const lineAnimationTag = lineLevel
-      ? animationMode.toLowerCase() === "slide"
-        ? buildSlideTag(alignment, marginV)
+      ? isSlide
+        ? buildSlideTag(alignment, marginV, customPosition)
         : buildAnimationTag("neon", 0, lineDurationMs, { glowColor: primaryColor })
+      : "";
+    const positionTag = customPosition && !isSlide
+      ? `{\\an5\\pos(${customPosition.x},${customPosition.y})}`
       : "";
 
     let cumulativeMs = 0;
@@ -950,7 +1002,7 @@ const generateAssFromPreview = (previewModel = {}) => {
         cumulativeMs += duration * 10;
 
         const perWordTag = lineLevel ? "" : buildAnimationTag(animationMode, wordStartMs, duration * 10);
-        const prefix = index === 0 ? lineAnimationTag + perWordTag : perWordTag;
+        const prefix = index === 0 ? positionTag + lineAnimationTag + perWordTag : perWordTag;
 
         return `${prefix}{\\kf${duration}}${escapeAssText(word.word)}`;
       })

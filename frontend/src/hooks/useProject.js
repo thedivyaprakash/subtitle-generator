@@ -59,6 +59,8 @@ export default function useProject(state, setters) {
     );
     setters.setUppercase(Boolean(editorStyles.uppercase));
     setters.setPosition(editorStyles.position || "bottom");
+    setters.setPositionX(Number.isFinite(Number(editorStyles.positionX)) ? Number(editorStyles.positionX) : 50);
+    setters.setPositionY(Number.isFinite(Number(editorStyles.positionY)) ? Number(editorStyles.positionY) : 85);
     setters.setHighlightColor(editorStyles.highlightColor || "#ffff00");
     setters.setHighlightMode(editorStyles.highlightMode || "current");
     setters.setAnimation(editorStyles.animation || "none");

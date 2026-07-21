@@ -103,6 +103,8 @@ const renderWorker = new Worker(
       backgroundEnabled,
       backgroundStyle,
       uppercase,
+      positionX,
+      positionY,
       previewModel,
       useEnhancedAudio,
     } = job.data;
@@ -149,6 +151,16 @@ const renderWorker = new Worker(
 
       const alignment =
         selectedPosition === "top" ? 8 : selectedPosition === "center" ? 5 : 2;
+      // Dragged position from the live preview, in the same 1920x1080
+      // canvas the ASS generators already work in — overrides the
+      // alignment-driven default spot when the user dropped the caption
+      // somewhere custom.
+      const customPosition =
+        selectedPosition === "custom" &&
+        Number.isFinite(Number(positionX)) &&
+        Number.isFinite(Number(positionY))
+          ? { x: (Number(positionX) / 100) * 1920, y: (Number(positionY) / 100) * 1080 }
+          : null;
 
       let assPath;
       let words = [];
@@ -176,6 +188,7 @@ const renderWorker = new Worker(
           highlightColor: hexToAssColor(selectedKaraokeHighlightColor),
           primaryColor: hexToAssColor(fontColor),
           alignment,
+          customPosition,
         });
       } else {
         assPath = convertSrtToAss(subtitlePath, {
@@ -202,6 +215,7 @@ const renderWorker = new Worker(
           uppercase: selectedUppercase,
           alignment,
           animationMode: selectedKaraokeAnimationMode,
+          customPosition,
         });
       }
 
